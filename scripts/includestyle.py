@@ -1,11 +1,12 @@
-import modules.scripts as scripts
 import modules
-from modules import shared
+from modules import shared, styles, scripts
 import re
 
 RE_PATTERN = r'(#include\s*<([^>]*)>)'
 
 class IncludeStyleScript(scripts.Script):
+
+    original_styles_ : object = None
 
     def title(self):
         return "IncludeStyle"
@@ -35,14 +36,57 @@ class IncludeStyleScript(scripts.Script):
 
     def process(self, p, *args):
 
+        #import pprint
+        #pprint.pprint(vars(p))
+        #pprint.pprint(vars(p.scripts))
+
         if p.extra_generation_params and "ADetailer prompt" in p.extra_generation_params:
             #print("_replace_common() for p.extra_generation_params[ADetailer prompt]")
             p.extra_generation_params["ADetailer prompt"] = self._replace_common(p.extra_generation_params["ADetailer prompt"], False)
 
+    def postprocess(self, p, *args):
+
+        # before_processで差し替えたスタイルデータを元に戻す
+        if(self.original_styles_) :
+            shared.prompt_styles.styles = self.original_styles_
+            self.original_styles_ = None
+        pass
+
     def before_process(self, p, *args):
 
-        #import pprint
+        import pprint
         #pprint.pprint(vars(p))
+
+        # 処理中、メモリ上のスタイルデータを変更し、処理が終わったら戻すため、オリジナルデータをコピーしておく
+        self.original_styles_ = shared.prompt_styles.styles.copy()
+
+        # メモリ上のスタイルデータのincludeをすべて解決（再帰対応）
+        processed = True
+        while processed:
+            processed = False
+            for key in shared.prompt_styles.styles:
+
+                # 通常プロンプト
+                new_prompt = ""
+                if(shared.prompt_styles.styles[key].prompt and len(shared.prompt_styles.styles[key].prompt) > 0):
+                    new_prompt = self._replace_common(shared.prompt_styles.styles[key].prompt, False)
+                    if(new_prompt != shared.prompt_styles.styles[key].prompt):
+                        processed = True
+
+                # Negativeプロンプト
+                new_negative_prompt = ""
+                if(shared.prompt_styles.styles[key].negative_prompt and len(shared.prompt_styles.styles[key].negative_prompt) > 0):
+                    new_negative_prompt = self._replace_common(shared.prompt_styles.styles[key].negative_prompt, True)
+                    if(new_negative_prompt != shared.prompt_styles.styles[key].negative_prompt):
+                        processed = True
+
+                # スタイル差し替え
+                shared.prompt_styles.styles[key] = styles.PromptStyle(
+                        shared.prompt_styles.styles[key].name, new_prompt, new_negative_prompt,
+                        shared.prompt_styles.styles[key].path)
+
+        #pprint.pprint(shared.prompt_styles.styles)
+
         if p.prompt and len(p.prompt) > 0:
             #print("_replace_common() for p.prompt")
             p.prompt = self._replace_common(p.prompt, False)

@@ -42,14 +42,23 @@ Negativeプロンプトで記述する場合は、スタイルのNegative要素�
 EasyNegative, bad face
 ```
 
-スタイル内で他のスタイルを参照することもできます。参照したスタイルがさらに別のスタイルをincludeすることも可能です。
+スタイル内で他のスタイルを参照することもできます。参照したスタイルがさらに別のスタイルをincludeすることも可能です。  
+includeで指定するスタイルを、そのincludeを使っているスタイルより後で定義していてもかまいません。  
+以下の例では、「黒髪ロング」スタイルを、それをincludeしている「教室で黒髪ロングの女の子」スタイルより後で定義しています。また、「黒髪ロング」スタイルは、さらに「ロングヘアー」スタイルをincludeしています。
 
 ```csv
+教室で黒髪ロングの女の子,"1girl, #include<黒髪ロング>, in school, wearing school uniform","#include<標準Negative指定>"
 name,prompt,negative_prompt
 ロングヘアー,"long hair"
 黒髪ロング,"black hair, #include<ロングヘアー>"
 標準Negative指定,"","EasyNegative, bad face"
-教室で黒髪ロングの女の子,"1girl, #include<黒髪ロング>, in school, wearing school uniform","#include<標準Negative指定>"
+```
+
+上記のように記述した状態で、「教室で黒髪ロングの女の子」のスタイルを適用して生成すると、結果のプロンプトは以下のようになります。
+
+```
+Prompt : 1girl, black hair, long hair, in school, wearing school uniform
+Negative prompt : EasyNegative, bad face
 ```
 
 ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative prompt」欄でもincludeを使用可能です。

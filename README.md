@@ -61,4 +61,16 @@ Prompt : 1girl, black hair, long hair, in school, wearing school uniform
 Negative prompt : EasyNegative, bad face
 ```
 
-ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative prompt」欄でもincludeを使用可能です。
+## ADetailerとの併用について
+
+ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative prompt」欄でもincludeを使用可能ですが、以下のような事前設定が必要です。
+
+1. WebUIの「Settings」を開く
+2. 「ADetailer」に移動
+3. 「Script names to apply to ADetailer (separated by comma)」テキストボックスに移動
+4. テキストボックス内容の文字列の最後に「,includestyle」を追加
+5. 「Apply Settings」を実行
+
+---
+
+Copyright© Jujo Hotaru / 十条 蛍

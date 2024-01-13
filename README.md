@@ -16,7 +16,6 @@ Stable Diffusion Automatic1111 WebUIの「スタイル」機能を拡張しま�
 ```csv
 name,prompt,negative_prompt
 黒髪ロング,"black hair, long hair"
-金髪ショートボブ,"blonde hair, short bob cut"
 標準Negative指定,"","EasyNegative, bad face"
 ```
 
@@ -26,7 +25,7 @@ name,prompt,negative_prompt
 スタイル名に`>`を使用することはできません。書式文字と誤認するためです。（エスケープ書式はありません）
 
 ```
-1girl, #include<黒髪ロング>, in school, wearing school uniform
+1girl, #include < 黒髪ロング >, in school, wearing school uniform
 ```
 ↓
 ```
@@ -36,21 +35,21 @@ name,prompt,negative_prompt
 Negativeプロンプトで記述する場合は、スタイルのNegative要素のほうを取り込みます。  
 
 ```
-#include < 標準Negative指定 >
+#include<標準Negative指定>
 ```
 ↓
 ```
 EasyNegative, bad face
 ```
 
-スタイル内で他のスタイルを参照することもできます。
+スタイル内で他のスタイルを参照することもできます。参照したスタイルがさらに別のスタイルをincludeすることも可能です。
 
 ```csv
 name,prompt,negative_prompt
-黒髪ロング,"black hair, long hair"
-金髪ショートボブ,"blonde hair, short bob cut"
+ロングヘアー,"long hair"
+黒髪ロング,"black hair, #include<ロングヘアー>"
 標準Negative指定,"","EasyNegative, bad face"
 教室で黒髪ロングの女の子,"1girl, #include<黒髪ロング>, in school, wearing school uniform","#include<標準Negative指定>"
 ```
 
-ADetailer拡張機能の「」
+ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative prompt」欄でもincludeを使用可能です。

@@ -47,8 +47,8 @@ includeで指定するスタイルを、そのincludeを使っているスタイ
 以下の例では、「黒髪ロング」スタイルを、それをincludeしている「教室で黒髪ロングの女の子」スタイルより後で定義しています。また、「黒髪ロング」スタイルは、さらに「ロングヘアー」スタイルをincludeしています。
 
 ```csv
-教室で黒髪ロングの女の子,"1girl, #include<黒髪ロング>, in school, wearing school uniform","#include<標準Negative指定>"
 name,prompt,negative_prompt
+教室で黒髪ロングの女の子,"1girl, #include<黒髪ロング>, in school, wearing school uniform","#include<標準Negative指定>"
 ロングヘアー,"long hair"
 黒髪ロング,"black hair, #include<ロングヘアー>"
 標準Negative指定,"","EasyNegative, bad face"
@@ -61,6 +61,29 @@ Prompt : 1girl, black hair, long hair, in school, wearing school uniform
 Negative prompt : EasyNegative, bad face
 ```
 
+include結果は単純な文字列置換で、カンマなど余計な文字の付与は行われません。このため強調構文と組み合わせることができますし、Dynami Promptsなど他の構文拡張機能とも併用が可能です。
+
+以下の例では`黒髪ロング`で置換されるプロンプト（`black hair, long hair`）を強度1.3倍に指定しています。
+
+```csv
+name,prompt,negative_prompt
+教室で黒髪ロングの女の子,"1girl, (#include<黒髪ロング>:1.3), in school, wearing school uniform","#include<標準Negative指定>"
+ロングヘアー,"long hair"
+黒髪ロング,"black hair, #include<ロングヘアー>"
+標準Negative指定,"","EasyNegative, bad face"
+```
+
+以下の例では、Dynamic Promptsを使って髪色を4色および髪の長さ2種類からランダムに選択されるよう指定しています。
+
+```
+name,prompt,negative_prompt
+教室にいる女の子,"1girl, {#include<ロングヘアー>|#include<ショートヘアー>}, in school, wearing school uniform","#include<標準Negative指定>"
+髪の色ランダム,"{black|pink|blonde|white} hair"
+ロングヘアー,"#include<髪の色ランダム>, long hair"
+ショートヘアー,"#include<髪の色ランダム>, short hair"
+標準Negative指定,"","EasyNegative, bad face"
+```
+
 ## ADetailerとの併用について
 
 ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative prompt」欄でもincludeを使用可能ですが、以下のような事前設定が必要です。
@@ -70,6 +93,11 @@ ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative pro
 3. 「Script names to apply to ADetailer (separated by comma)」テキストボックスに移動
 4. テキストボックス内容の文字列の最後に「,includestyle」を追加
 5. 「Apply Settings」を実行
+
+## 注意事項
+
+- スタイル内で自分自身をincludeすると無限ループになり、エラーチェックされていませんので記述しないようにしてください。
+- 作者の使用範囲内での動作確認は行っていますが、作者の知らない機能や拡張機能との相性問題が存在する可能性があります。
 
 ---
 

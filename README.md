@@ -15,6 +15,14 @@ Stable Diffusion Automatic1111 WebUIの「スタイル」機能を強化しま�
 通常のプロンプト欄・NegativePrompt欄のほか、ADetailer拡張機能の追加プロンプト欄に対応。また、Dynamic Prompts拡張機能と併用ができます。  
 スタイル内でも使用できますので、複数スタイル間で共通使用されている要素を別スタイルに括り出して管理するといったことも可能です（主にそれを目的として開発しました）。
 
+## インストール
+
+WebUIの「Extension」-「Install from URL」を開き、「URL for extension’s git repository」に以下URLを指定してインストールできます。
+
+```
+https://github.com/JujoHotaru/sd-webui-include-style
+```
+
 ## 使用例
 
 スタイル（styles.csv）を以下のような内容にしている場合の例です。

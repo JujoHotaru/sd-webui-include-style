@@ -114,7 +114,7 @@ class IncludeStyleScript(scripts.Script):
 
         # used_stylesの重複削除
         used_styles = list(set(used_styles))
-        print(used_styles)
+        #print(used_styles)
 
         # メインプロンプトのinclude置換処理
         if p.prompt and len(p.prompt) > 0:

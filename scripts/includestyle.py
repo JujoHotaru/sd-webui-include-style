@@ -41,7 +41,7 @@ class IncludeStyleScript(scripts.Script):
                 print(f"[IncludeStyle] Warning: Style \"{key}\" not found!")
                 content = ""
             prompt = prompt.replace(found[0], content)
-        
+
         #print(f"prompt = {prompt}")
         return prompt
 
@@ -61,6 +61,11 @@ class IncludeStyleScript(scripts.Script):
         pass
 
     def before_process(self, p, *args):
+
+        self.prompt_delete_words_.clear()
+        self.negative_prompt_delete_words_.clear()
+        self.prompt_replace_elements_.clear()
+        self.negative_prompt_replace_elements_.clear()
 
         #pprint.pprint(vars(p))
 
@@ -99,7 +104,9 @@ class IncludeStyleScript(scripts.Script):
                 shared.prompt_styles.styles[key] = styles.PromptStyle(
                         shared.prompt_styles.styles[key].name, new_prompt, new_negative_prompt,
                         shared.prompt_styles.styles[key].path)
-        
+
+                #print(f"Includ processed at style {shared.prompt_styles.styles[key].name}, prompt = {new_prompt}, negative_prompt = {new_negative_prompt}")
+
         # deleteとreplaceで使うため、includeで参照したスタイルを記録
         founds = (re.findall(RE_PAT_INCLUDE, p.prompt))
         for found in founds:
@@ -109,8 +116,8 @@ class IncludeStyleScript(scripts.Script):
             used_styles.append(str.strip(found[1]))
 
         # p.stylesに、本来のUI経由で参照しているスタイルの一覧が入っているのでそれも追加
-        for style in p.styles:
-            used_styles.append(style)
+        for style_name in p.styles:
+            used_styles.append(style_name)
 
         # used_stylesの重複削除
         used_styles = list(set(used_styles))
@@ -125,9 +132,9 @@ class IncludeStyleScript(scripts.Script):
             p.negative_prompt = self._replace_common(p.negative_prompt, True)
 
         #pprint.pprint(shared.prompt_styles.styles)
-            
+
         # -------------- deleteとreplaceの指定取り出し --------------
-            
+
         # promptからdelete指定をすべて探し、指定そのものは消す
         founds = (re.findall(RE_PAT_DELETE, p.prompt))
         for found in founds:
@@ -141,14 +148,14 @@ class IncludeStyleScript(scripts.Script):
             self.negative_prompt_delete_words_.append(delete_word)
 
         # 使用されているスタイルからdelete指定をすべて探し、指定そのものは消す
-        for style in used_styles:
-            if style in shared.prompt_styles.styles:
+        for style_name in used_styles:
+            if style_name in shared.prompt_styles.styles:
                 new_prompt = ""
                 new_negative_prompt = ""
 
-                if(shared.prompt_styles.styles[style].prompt and len(shared.prompt_styles.styles[style].prompt) > 0):
-                    new_prompt = shared.prompt_styles.styles[style].prompt
-                    founds = (re.findall(RE_PAT_DELETE, shared.prompt_styles.styles[style].prompt))
+                if(shared.prompt_styles.styles[style_name].prompt and len(shared.prompt_styles.styles[style_name].prompt) > 0):
+                    new_prompt = shared.prompt_styles.styles[style_name].prompt
+                    founds = (re.findall(RE_PAT_DELETE, shared.prompt_styles.styles[style_name].prompt))
                     for found in founds:
                         #print(f"found[0] = {found[0]}")
                         #print(f"found[1] = {found[1]}")
@@ -156,9 +163,9 @@ class IncludeStyleScript(scripts.Script):
                         new_prompt = new_prompt.replace(found[0], "")
                         self.prompt_delete_words_.append(delete_word)
 
-                if(shared.prompt_styles.styles[style].negative_prompt and len(shared.prompt_styles.styles[style].negative_prompt) > 0):
-                    new_negative_prompt = shared.prompt_styles.styles[style].negative_prompt
-                    founds = (re.findall(RE_PAT_DELETE, shared.prompt_styles.styles[style].negative_prompt))
+                if(shared.prompt_styles.styles[style_name].negative_prompt and len(shared.prompt_styles.styles[style_name].negative_prompt) > 0):
+                    new_negative_prompt = shared.prompt_styles.styles[style_name].negative_prompt
+                    founds = (re.findall(RE_PAT_DELETE, shared.prompt_styles.styles[style_name].negative_prompt))
                     for found in founds:
                         delete_word = str.strip(found[1])
                         new_negative_prompt = new_negative_prompt.replace(found[0], "")
@@ -167,10 +174,10 @@ class IncludeStyleScript(scripts.Script):
                 if(len(new_prompt) > 0 or len(new_negative_prompt) > 0):
                     #print(f"delete new_prompt = {new_prompt}")
                     #print(f"delete new_negative_prompt = {new_negative_prompt}")
-                    shared.prompt_styles.styles[style] = styles.PromptStyle(
-                        shared.prompt_styles.styles[style].name,
+                    shared.prompt_styles.styles[style_name] = styles.PromptStyle(
+                        shared.prompt_styles.styles[style_name].name,
                         new_prompt, new_negative_prompt,
-                        shared.prompt_styles.styles[style].path
+                        shared.prompt_styles.styles[style_name].path
                     )
 
             #print(shared.prompt_styles.styles[style])
@@ -191,14 +198,14 @@ class IncludeStyleScript(scripts.Script):
             self.negative_prompt_replace_elements_.append((replace_from, replace_to))
 
         # 使用されているスタイルからreplace指定をすべて探し、指定そのものは消す
-        for style in used_styles:
-            if style in shared.prompt_styles.styles:
+        for style_name in used_styles:
+            if style_name in shared.prompt_styles.styles:
                 new_prompt = ""
                 new_negative_prompt = ""
 
-                if(shared.prompt_styles.styles[style].prompt and len(shared.prompt_styles.styles[style].prompt) > 0):
-                    new_prompt = shared.prompt_styles.styles[style].prompt
-                    founds = (re.findall(RE_PAT_REPLACE, shared.prompt_styles.styles[style].prompt))
+                if(shared.prompt_styles.styles[style_name].prompt and len(shared.prompt_styles.styles[style_name].prompt) > 0):
+                    new_prompt = shared.prompt_styles.styles[style_name].prompt
+                    founds = (re.findall(RE_PAT_REPLACE, shared.prompt_styles.styles[style_name].prompt))
                     for found in founds:
                         #print(f"replace found[0] = {found[0]}")
                         #print(f"replace found[1] = {found[1]}")
@@ -208,9 +215,9 @@ class IncludeStyleScript(scripts.Script):
                         new_prompt = new_prompt.replace(found[0], "")
                         self.prompt_replace_elements_.append((replace_from, replace_to))
 
-                if(shared.prompt_styles.styles[style].negative_prompt and len(shared.prompt_styles.styles[style].negative_prompt) > 0):
-                    new_negative_prompt = shared.prompt_styles.styles[style].negative_prompt
-                    founds = (re.findall(RE_PAT_REPLACE, shared.prompt_styles.styles[style].negative_prompt))
+                if(shared.prompt_styles.styles[style_name].negative_prompt and len(shared.prompt_styles.styles[style_name].negative_prompt) > 0):
+                    new_negative_prompt = shared.prompt_styles.styles[style_name].negative_prompt
+                    founds = (re.findall(RE_PAT_REPLACE, shared.prompt_styles.styles[style_name].negative_prompt))
                     for found in founds:
                         replace_from = str.strip(found[1])
                         replace_to = str.strip(found[2])
@@ -220,62 +227,94 @@ class IncludeStyleScript(scripts.Script):
                 if(len(new_prompt) > 0 or len(new_negative_prompt) > 0):
                     #print(f"replace new_prompt = {new_prompt}")
                     #print(f"replace new_negative_prompt = {new_negative_prompt}")
-                    shared.prompt_styles.styles[style] = styles.PromptStyle(
-                        shared.prompt_styles.styles[style].name,
+                    shared.prompt_styles.styles[style_name] = styles.PromptStyle(
+                        shared.prompt_styles.styles[style_name].name,
                         new_prompt, new_negative_prompt,
-                        shared.prompt_styles.styles[style].path
+                        shared.prompt_styles.styles[style_name].path
                     )
 
             #print(shared.prompt_styles.styles[style])
 
         # -------------- deleteとreplace処理 --------------
-                    
-        # スタイル内プロンプトに対してdeleteとreplaceを処理
-        for key in shared.prompt_styles.styles:
 
-            replaced = False
+        # スタイル内プロンプトに対してdeleteとreplaceを処理
+        for style_name in shared.prompt_styles.styles:
+
+            processed = False
 
             # 通常プロンプト
             new_prompt = ""
-            if(shared.prompt_styles.styles[key].prompt and len(shared.prompt_styles.styles[key].prompt) > 0):
-                new_prompt = shared.prompt_styles.styles[key].prompt
+            if(shared.prompt_styles.styles[style_name].prompt and len(shared.prompt_styles.styles[style_name].prompt) > 0):
+                new_prompt = shared.prompt_styles.styles[style_name].prompt
                 for delete_word in self.prompt_delete_words_:
-                    new_prompt = new_prompt.replace(delete_word, "")
+                    new_prompt2 = new_prompt.replace(delete_word, "")
+                    if(new_prompt2 != new_prompt):
+                        #print(f"[IncludeStyle] in style {style_name} / deleted from prompt : [{delete_word}]")
+                        processed = True
+                    new_prompt = new_prompt2
                 for replace_element in self.prompt_replace_elements_:
-                    new_prompt = new_prompt.replace(replace_element[0], replace_element[1])
-                if(new_prompt != shared.prompt_styles.styles[key].prompt):
-                    replaced = True
-            
+                    new_prompt2 = new_prompt.replace(replace_element[0], replace_element[1])
+                    if(new_prompt2 != new_prompt):
+                        #print(f"[IncludeStyle] in style {style_name} / replaced in prompt : [{replace_element[0]}] to [{replace_element[1]}]")
+                        processed = True
+                    new_prompt = new_prompt2
+
             # Negativeプロンプト
             new_negative_prompt = ""
-            if(shared.prompt_styles.styles[key].negative_prompt and len(shared.prompt_styles.styles[key].negative_prompt) > 0):
-                new_negative_prompt = shared.prompt_styles.styles[key].negative_prompt
+            if(shared.prompt_styles.styles[style_name].negative_prompt and len(shared.prompt_styles.styles[style_name].negative_prompt) > 0):
+                new_negative_prompt = shared.prompt_styles.styles[style_name].negative_prompt
                 for delete_word in self.negative_prompt_delete_words_:
-                    new_negative_prompt = new_negative_prompt.replace(delete_word, "")
+                    new_negative_prompt2 = new_negative_prompt.replace(delete_word, "")
+                    if(new_negative_prompt2 != new_negative_prompt):
+                        #print(f"[IncludeStyle] in style {style_name} / deleted from negative prompt : [{delete_word}]")
+                        processed = True
+                    new_negative_prompt = new_negative_prompt2
                 for replace_element in self.negative_prompt_replace_elements_:
-                    new_negative_prompt = new_negative_prompt.replace(replace_element[0], replace_element[1])
-                if(new_negative_prompt != shared.prompt_styles.styles[key].negative_prompt):
-                    replaced = True
-            
+                    new_negative_prompt2 = new_negative_prompt.replace(replace_element[0], replace_element[1])
+                    if(new_negative_prompt2 != new_negative_prompt):
+                        #print(f"[IncludeStyle] in style {style_name} / replaced in negative prompt : [{replace_element[0]}] to [{replace_element[1]}]")
+                        processed = True
+                    new_negative_prompt = new_negative_prompt2
+
             # スタイル差し替え
-            if(replaced):
-                shared.prompt_styles.styles[key] = styles.PromptStyle(
-                    shared.prompt_styles.styles[key].name,
+            if(processed):
+                shared.prompt_styles.styles[style_name] = styles.PromptStyle(
+                    shared.prompt_styles.styles[style_name].name,
                     new_prompt, new_negative_prompt,
-                    shared.prompt_styles.styles[key].path
+                    shared.prompt_styles.styles[style_name].path
                 )
 
-            #print(shared.prompt_styles.styles[key])
-            
+            #print(shared.prompt_styles.styles[style])
+
         # メインプロンプトのdeleteとreplace
         if p.prompt and len(p.prompt) > 0:
+            new_prompt = p.prompt
             for delete_word in self.prompt_delete_words_:
-                p.prompt = p.prompt.replace(delete_word, "")
+                new_prompt2 = new_prompt.replace(delete_word, "")
+                if(new_prompt2 != new_prompt):
+                    #print(f"[IncludeStyle] deleted from prompt : [{delete_word}]")
+                    pass
+                new_prompt = new_prompt2
             for replace_element in self.prompt_replace_elements_:
-                p.prompt = p.prompt.replace(replace_element[0], replace_element[1])
+                new_prompt2 = new_prompt.replace(replace_element[0], replace_element[1])
+                if(new_prompt2 != new_prompt):
+                    #print(f"[IncludeStyle] replaced in prompt : [{replace_element[0]}] to [{replace_element[1]}]")
+                    pass
+                new_prompt = new_prompt2
+            p.prompt = new_prompt
 
         if p.negative_prompt and len(p.negative_prompt) > 0:
+            new_negative_prompt = p.negative_prompt
             for delete_word in self.negative_prompt_delete_words_:
-                p.negative_prompt = p.negative_prompt.replace(delete_word, "")
+                new_negative_prompt2 = new_negative_prompt.replace(delete_word, "")
+                if(new_negative_prompt2 != new_negative_prompt):
+                    #print(f"[IncludeStyle] deleted from negative prompt : [{delete_word}]")
+                    pass
+                new_negative_prompt = new_negative_prompt2
             for replace_element in self.negative_prompt_replace_elements_:
-                p.negative_prompt = p.negative_prompt.replace(replace_element[0], replace_element[1])
+                new_negative_prompt2 = new_negative_prompt.replace(replace_element[0], replace_element[1])
+                if(new_negative_prompt2 != new_negative_prompt):
+                    #print(f"[IncludeStyle] replaced in negative prompt : [{replace_element[0]}] to [{replace_element[1]}]")
+                    pass
+                new_negative_prompt = new_negative_prompt2
+            p.negative_prompt = new_negative_prompt

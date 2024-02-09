@@ -11,7 +11,7 @@ Currently, Only Japanese language document is available.
 
 ## 概要
 
-Stable Diffusion Automatic1111 WebUIの「スタイル」機能を強化します。
+Stable Diffusion Automatic1111 WebUIの「スタイル」機能を強化します。[WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)でも動作します。
 
 プロンプトで`#include<スタイル名>`という構文を記述することで、特定のスタイルの内容をプロンプト内に取り込むことができます。
 

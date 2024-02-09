@@ -38,9 +38,6 @@ name,prompt,negative_prompt
 
 プロンプトで以下のように記述すると、指定スタイルの内容が取り込まれます。
 
-`#include`と`<>`の間にはスペースを入れることができ、`< スタイル名 >`のようにスタイル名の前後にもスペースを入れることができます。  
-スタイル名に`>`を使用することはできません。書式文字と誤認するためです。（エスケープ書式はありません）
-
 ```
 1girl, #include < 黒髪ロング >, in school, wearing school uniform
 ```
@@ -48,6 +45,9 @@ name,prompt,negative_prompt
 ```
 1girl, black hair, long hair, in school, wearing school uniform
 ```
+
+`#include`と`<>`の間にはスペースを入れることができ、`< スタイル名 >`のようにスタイル名の前後にもスペースを入れることができます。  
+スタイル名に`>`を使用することはできません。書式文字と誤認するためです。（エスケープ書式はありません）
 
 Negativeプロンプトで記述する場合は、スタイルのNegative要素のほうを取り込みます。  
 

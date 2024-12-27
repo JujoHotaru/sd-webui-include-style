@@ -36,7 +36,8 @@ name,prompt,negative_prompt
 標準Negative指定,"","EasyNegative, bad face"
 ```
 
-プロンプトで以下のように記述すると、指定スタイルの内容が取り込まれます。
+プロンプトで以下のように記述すると、指定スタイルの内容が取り込まれます。  
+`#`の代わりに`$`も使用できます。（Forgeなど、`#`が別の意味に使われている環境向け）
 
 ```
 1girl, #include < 黒髪ロング >, in school, wearing school uniform

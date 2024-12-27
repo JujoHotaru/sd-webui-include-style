@@ -3,9 +3,9 @@ from modules import shared, styles, scripts
 import re
 import pprint
 
-RE_PAT_INCLUDE = r'(#include\s*<([^>]*)>)'
-RE_PAT_DELETE = r'(#delete\s*<([^>]*)>)'
-RE_PAT_REPLACE = r'(#replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
+RE_PAT_INCLUDE = r'([#$]include\s*<([^>]*)>)'
+RE_PAT_DELETE = r'([#$]delete\s*<([^>]*)>)'
+RE_PAT_REPLACE = r'([#$]replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
 
 class IncludeStyleScript(scripts.Script):
 

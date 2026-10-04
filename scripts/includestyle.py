@@ -19,6 +19,7 @@ MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
 PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
 METADATA_KEY = 'Include-style'
+AUTO_INCLUDE_ON_PASTE = True
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -116,7 +117,77 @@ def _update_original_metadata(p):
         params[METADATA_KEY] = value
 
 
+def _auto_include_enabled():
+    # 将来の設定 UI は、この判定へ値を渡す
+    return AUTO_INCLUDE_ON_PASTE
+
+
+def _auto_include_candidates():
+    with _STYLE_LOCK:
+        database = shared.prompt_styles
+        source = database.styles
+        if _STYLE_STATES and _STYLE_STATES[-1].database is database:
+            source = _STYLE_STATES[-1].source
+        candidates = ({}, {})
+        for name, style in source.items():
+            if not name or name != name.strip() or any(char in name for char in '>\r\n'):
+                continue
+            bodies = (style.prompt or '', style.negative_prompt or '')
+            # 反対側の指示も発動するため、両欄とも副作用のないスタイルだけを使う
+            if any(_has_commands(body) or '{prompt}' in body for body in bodies):
+                continue
+            for side, body in enumerate(bodies):
+                body = body.strip()
+                if body:
+                    candidates[side].setdefault(body, name)
+        return candidates
+
+
+def _include_matching_styles(text, candidates):
+    if not candidates:
+        return text
+    matcher = re.compile('|'.join(re.escape(body) for body in sorted(candidates, key=len, reverse=True)))
+    protected = re.compile('|'.join((RE_PAT_EXPAND, RE_PAT_DELETE, RE_PAT_REPLACE)))
+    end = len(text.rstrip())
+
+    def replace_segment(start, stop):
+        def replace(found):
+            # 全文・末尾の一致はホスト標準のスタイル指定に任せる
+            if start + found.end() == end:
+                return found[0]
+            return f'#include<{candidates[found[0]]}>'
+        return matcher.sub(replace, text[start:stop])
+
+    parts, offset = [], 0
+    for command in protected.finditer(text):
+        parts.append(replace_segment(offset, command.start()))
+        parts.append(command[0])
+        offset = command.end()
+    parts.append(replace_segment(offset, len(text)))
+    return ''.join(parts)
+
+
+def _auto_include_from_infotext(infotext, params):
+    if not _auto_include_enabled():
+        return
+    fields = {field: params.get(field) for field in ('Prompt', 'Negative prompt')}
+    if not all(isinstance(text, str) for text in fields.values()):
+        return
+    candidates = _auto_include_candidates()
+    converted = {
+        field: _include_matching_styles(fields[field], candidates[side])
+        for side, field in enumerate(('Prompt', 'Negative prompt'))
+    }
+    if all(converted[field] == fields[field] for field in converted):
+        return
+    # ホストが抽出した本文・スタイル選択・hires設定は保持し、残った部分だけを変換する
+    params.update(converted)
+
+
 def _on_infotext_pasted(_infotext, params):
+    if METADATA_KEY not in params:
+        _auto_include_from_infotext(_infotext, params)
+        return
     raw = params.get(METADATA_KEY)
     if not isinstance(raw, str):
         return

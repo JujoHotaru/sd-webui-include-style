@@ -1,6 +1,6 @@
 # sd-webui-include-style
 
-Currently, Only Japanese language document is available.
+日本語 | [English](README_en.md)
 
 ## はじめに（免責事項）
 

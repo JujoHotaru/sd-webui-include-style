@@ -100,6 +100,20 @@ class IncludeStyleTests(unittest.TestCase):
         self.assertEqual(p.prompt, "left  right")
         self.assertIn("存在しない", output.getvalue())
 
+    def test_include_trims_edges_and_preserves_internal_and_surrounding_whitespace(self):
+        self.shared.prompt_styles.styles["spacing"] = PromptStyle(
+            "spacing", " \t\r\nbody \t\r\nend\u3000", "\u3000bad\t \nbad end\r\n",
+        )
+        p = self.prompt(" \t[#include<spacing>]\n", "[$include<spacing>]",
+                        extra={"ADetailer prompt": "%include<spacing>",
+                               "ADetailer negative prompt": "#include<spacing>"})
+        self.script.before_process(p)
+        self.script.process(p)
+        self.assertEqual(p.prompt, " \t[body \t\r\nend]\n")
+        self.assertEqual(p.negative_prompt, "[bad\t \nbad end]")
+        self.assertEqual(p.extra_generation_params["ADetailer prompt"], "body \t\r\nend")
+        self.assertEqual(p.extra_generation_params["ADetailer negative prompt"], "bad\t \nbad end")
+
     def test_selected_styles_remain_selected_and_shared_styles_restore(self):
         original = self.shared.prompt_styles.styles.copy()
         original_obj = original["base"]

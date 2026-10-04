@@ -18,9 +18,7 @@ RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
 MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
 PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
-ORIGINAL_PROMPT_KEY = 'Include-style original prompt'
-ORIGINAL_NEGATIVE_KEY = 'Include-style original negative prompt'
-_ORIGINAL_KEYS = (ORIGINAL_PROMPT_KEY, ORIGINAL_NEGATIVE_KEY)
+METADATA_KEY = 'Include-style'
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -73,14 +71,21 @@ class _OriginalPrompts:
         position = index if isinstance(self.values[side], list) else 0
         return 0 <= position < len(self.changed[side]) and self.changed[side][position]
 
-    def value(self, side, index):
-        if not self.is_changed(side, index):
+    def value(self, index):
+        if not any(self.is_changed(side, index) for side in (0, 1)):
             return None
-        raw = self.values[side]
-        position = index if isinstance(raw, list) else 0
-        text = raw[position] if isinstance(raw, list) else raw
+        texts = []
+        for raw in self.values:
+            if isinstance(raw, list):
+                if not 0 <= index < len(raw):
+                    return None
+                texts.append(raw[index])
+            else:
+                texts.append(raw)
         # 標準の infotext の引用処理を通しても、空文字と前後空白を失わない
-        return json.dumps({'text': text}, ensure_ascii=False)
+        return json.dumps({
+            'prompt': texts[0], 'negative prompt': texts[1], 'styles': self.styles,
+        }, ensure_ascii=False)
 
 
 def _original_index(p, fields):
@@ -104,24 +109,33 @@ def _update_original_metadata(p):
     if state is None or state.owner is not p or not state.metadata_valid or params is None:
         return
     originals = state.originals
-    for side, key in enumerate((ORIGINAL_PROMPT_KEY, ORIGINAL_NEGATIVE_KEY)):
-        params.pop(key, None)
-        if any(originals.changed[side]):
-            def value(side=side, **fields):
-                return originals.value(side, _original_index(p, fields))
-            params[key] = value
+    params.pop(METADATA_KEY, None)
+    if any(any(flags) for flags in originals.changed):
+        def value(**fields):
+            return originals.value(_original_index(p, fields))
+        params[METADATA_KEY] = value
 
 
 def _on_infotext_pasted(_infotext, params):
-    for key, field in ((ORIGINAL_PROMPT_KEY, 'Prompt'), (ORIGINAL_NEGATIVE_KEY, 'Negative prompt')):
-        if key not in params or not isinstance(params[key], str):
-            continue
-        try:
-            payload = json.loads(params[key])
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(payload, dict) and isinstance(payload.get('text'), str):
-            params[field] = payload['text']
+    raw = params.get(METADATA_KEY)
+    if not isinstance(raw, str):
+        return
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError):
+        return
+    if not isinstance(payload, dict):
+        return
+    prompt, negative_prompt, selected = (
+        payload.get('prompt'), payload.get('negative prompt'), payload.get('styles'),
+    )
+    if not (isinstance(prompt, str) and isinstance(negative_prompt, str)
+            and isinstance(selected, list) and all(isinstance(style, str) for style in selected)):
+        return
+    # 原本の両欄と選択スタイルを一緒に戻し、展開済みスタイルの二重適用を防ぐ
+    params['Prompt'] = prompt
+    params['Negative prompt'] = negative_prompt
+    params['Styles array'] = list(selected)
 
 
 class _IncludeResolver:
@@ -225,7 +239,8 @@ class _IncludeResolver:
             if found[2] == 'includefile':
                 content = self.file_content(key, negative, depth)
             else:
-                content = self.style_content(key, negative, depth).strip()
+                content = self.style_content(key, negative, depth)
+            content = content.strip()
             literal = prompt[offset:found.start()]
             length += len(literal) + len(content)
             if length > MAX_PROMPT_LENGTH:
@@ -369,8 +384,7 @@ class IncludeStyleScript(scripts.Script):
             # 浅いコピーの再入処理で親の生成情報を消さない
             if previous is not None and previous.owner is not p:
                 params = p.extra_generation_params = dict(params)
-            for key in _ORIGINAL_KEYS:
-                params.pop(key, None)
+            params.pop(METADATA_KEY, None)
         if previous is not None and previous.active and previous.owner is p:
             # 同じ処理オブジェクトの再実行では、前回の状態を残さない
             _restore_processing(p)

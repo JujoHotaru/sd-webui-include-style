@@ -49,17 +49,34 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(p.prompt, 'plain child slash')
         self.assertEqual(p.negative_prompt, 'plain')
 
-    def test_utf8_bom_and_file_whitespace_are_preserved(self):
-        self.write_prompt('spacing.txt', b'\xef\xbb\xbf  body\r\nend  \r\n')
-        p = self.prompt('#includefile<spacing>')
+    def test_utf8_file_edges_are_trimmed_and_internal_whitespace_is_preserved(self):
+        for bom in (b'', b'\xef\xbb\xbf'):
+            with self.subTest(bom=bom):
+                self.write_prompt('spacing.txt', bom + b' \t\r\nbody \t\r\nend  \r\n')
+                p = self.prompt(' \t[#includefile<spacing>]\n', '#includefile<spacing>')
+                self.script.before_process(p)
+                self.assertEqual(p.prompt, ' \t[body \t\r\nend]\n')
+                self.assertEqual(p.negative_prompt, 'body \t\r\nend')
+                self.script.postprocess(p)
+
+    def test_nested_references_and_whitespace_only_files_are_trimmed(self):
+        self.write_prompt('empty.txt', ' \t\r\n\u3000')
+        self.write_prompt('inner.txt', ' \t\r\ninside\u3000')
+        self.write_prompt('outer.txt', '#includefile<empty> \n#includefile<inner>\t')
+        self.shared.prompt_styles.styles['bridge'] = self.module.styles.PromptStyle(
+            'bridge', ' \t#includefile<outer>\n', '\n#includefile<outer>\t',
+        )
+        p = self.prompt(['[#include<bridge>]', '[$includefile<outer>]', '%includefile<empty>'],
+                        ['[%include<bridge>]', '[%includefile<outer>]'])
         self.script.before_process(p)
-        self.assertEqual(p.prompt, '  body\r\nend  \r\n')
+        self.assertEqual(p.prompt, ['[inside]', '[inside]', ''])
+        self.assertEqual(p.negative_prompt, ['[inside]', '[inside]'])
 
     def test_bom_utf16_little_and_big_endian_expand_both_fields(self):
-        source = '  日本語 #include<base> \r\n'
+        source = ' \t\r\n日本語 \t\r\n#include<base> \r\n'
         for encoding, expected_positive, expected_negative in (
-                ('utf-16-le', '  日本語 基本 \r\n', '  日本語 基本ネガ \r\n'),
-                ('utf-16-be', '  日本語 基本 \r\n', '  日本語 基本ネガ \r\n')):
+                ('utf-16-le', '日本語 \t\r\n基本', '日本語 \t\r\n基本ネガ'),
+                ('utf-16-be', '日本語 \t\r\n基本', '日本語 \t\r\n基本ネガ')):
             with self.subTest(encoding=encoding):
                 payload = (b'\xff\xfe' if encoding == 'utf-16-le' else b'\xfe\xff')
                 (self.prompts / 'utf16.txt').write_bytes(payload + source.encode(encoding))
@@ -117,7 +134,7 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(self.shared.prompt_styles.styles['target'].prompt, ' white')
 
     def test_selected_style_can_include_file_and_file_can_include_style(self):
-        self.write_prompt('selected.txt', 'file #include<base>')
+        self.write_prompt('selected.txt', ' \t\r\nfile #include<base>\n ')
         self.shared.prompt_styles.styles['selected'] = self.module.styles.PromptStyle(
             'selected', '#includefile<selected>', '#includefile<selected>'
         )
@@ -127,7 +144,7 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(self.shared.prompt_styles.styles['selected'].negative_prompt, 'file 基本ネガ')
 
     def test_adetailer_numbered_keys_and_lists_expand_files_by_field(self):
-        self.write_prompt('fields.txt', '#include<base>')
+        self.write_prompt('fields.txt', ' \t\r\n#include<base>\n ')
         extra = {
             'ADetailer prompt': '#includefile<fields>',
             'ADetailer prompt 2': ['x #includefile<fields>', '#includefile<fields>'],

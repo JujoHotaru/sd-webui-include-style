@@ -13,7 +13,7 @@ Currently, Only Japanese language document is available.
 
 [Stable Diffusion WebUI（AUTOMATIC1111）](https://github.com/AUTOMATIC1111/stable-diffusion-webui)や、その派生である[WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)、[Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)などの「スタイル」機能を強化する拡張機能です。WebUI本体のスクリプト機構とスタイル管理機能を利用して動作します。
 
-プロンプトで`#include<スタイル名>`という構文を記述することで、特定のスタイルの内容をプロンプト内に取り込むことができます。
+プロンプトで`#include<スタイル名>`または`#includefile<ファイル名>`という構文を記述すると、スタイルやテキストファイルの内容をプロンプト内に取り込めます。
 
 txt2img・img2imgの通常のプロンプト欄・Negative prompt欄と、スタイル内で使用できます。指定した文字列を削除する`#delete`、置換する`#replace`も使用できます。ADetailerの追加プロンプト欄で使用するには、後述の設定が必要です。Dynamic Promptsの構文と組み合わせる例も後述します。
 
@@ -31,11 +31,12 @@ https://github.com/JujoHotaru/sd-webui-include-style
 
 ## 構文
 
-以下の3種類の構文を使用できます。いずれも先頭の`#`を`$`または`%`に変更できます。コマンド名は小文字で記述してください。
+以下の4種類の構文を使用できます。いずれも先頭の`#`を`$`または`%`に変更できます。コマンド名は小文字で記述してください。
 
 | 構文 | 動作 |
 | --- | --- |
 | `#include<スタイル名>` | 入力した位置にスタイルの内容を取り込む |
+| `#includefile<ファイル名>` | `prompts`フォルダー内のテキストファイルを入力した位置に取り込む |
 | `#delete<削除する文字列>` | 対象の文字列をすべて削除する |
 | `#replace<置換前\|置換後>` | 対象の文字列をすべて置換する |
 
@@ -125,6 +126,31 @@ name,prompt,negative_prompt
 
 WebUI標準のスタイル機能にある`{prompt}`は、include自体では展開しません。例えば`prefix, {prompt}, suffix`をincludeすると、`{prompt}`を含む文字列をそのまま挿入します。入力プロンプトを囲む用途では、そのスタイルをWebUIのスタイル選択欄から適用してください。
 
+## includefileの使用例
+
+拡張機能の`prompts`フォルダーにUTF-8形式（BOM可）、またはBOM付きUTF-16LE／UTF-16BE形式のテキストファイルを置き、拡張子を省略して`#includefile<foobar>`のように指定します。`.txt`を付けた`#includefile<foobar.txt>`も使用できます。例えば`prompts/foobar.txt`に次の本文を保存します。
+
+```text
+black hair, long hair
+```
+
+プロンプトに次のように記述すると、本文がそのまま展開されます。
+
+```
+1girl, #includefile<foobar>
+```
+↓
+
+```
+1girl, black hair, long hair
+```
+
+`foo/bar`のようなサブフォルダーを含む相対パスも指定でき、Windows形式の区切り文字`\`も使えます。すべてのファイル参照は`prompts`を基準に解決します。ファイル本文の前後空白や改行は保持され、BOMはプロンプトに含めません。BOMがなければUTF-8として読み込み、UTF-16の推測は行いません。ファイル本文にも`#include`や`#includefile`を記述できます。入れ子の`includefile`も、常に`prompts`フォルダーを基準に展開します。ファイル本文のスタイル参照は、通常プロンプトではスタイルの`prompt`欄、Negativeプロンプトでは`negative_prompt`欄を使います。ファイル本文そのものは両方の欄で共通です。
+
+ファイル名は`prompts`フォルダーを基準とする相対パスに限られます。`prompts`内のファイルやサブフォルダーがシンボリックリンクの場合はリンク先を読み込み、リンク先が`prompts`の外にあっても使用できます。ファイル本文内の参照も引き続き`prompts`を基準にします。絶対パス、ドライブ指定、`..`、代替データストリーム、デバイス名は指定できません。ファイルが存在しない場合、リンク切れなどで読み込みに失敗した場合、またはパスが無効な場合は、警告を出してその参照を空文字に置き換えます。
+
+スタイル内やADetailerの生成情報にも`#includefile`を記述できます。ファイル内の参照を展開した後に、プロンプト欄やスタイルから集めた`delete`・`replace`を適用します。ファイル本文の読み込み内容は1回の生成処理内で共有され、次の生成処理では再読み込みされます。
+
 ## delete・replaceの使用例
 
 前述の「黒髪ロング」スタイルを使用した場合、次のように記述できます。
@@ -135,7 +161,7 @@ WebUI標準のスタイル機能にある`{prompt}`は、include自体では展�
 | `#replace<black hair\|pink hair>#include<黒髪ロング>` | `pink hair, long hair` |
 | `#replace<black\|pink>#delete<, long hair>#include<黒髪ロング>` | `pink hair` |
 
-処理順序は、構文の記述位置にかかわらず「includeの展開 → deleteによる削除 → replaceによる置換」です。通常のプロンプト欄の指定は通常のプロンプトに、Negativeプロンプト欄の指定はNegativeプロンプトに適用されます。指定は、includeした内容やWebUIの選択欄から適用するスタイルの内容にも作用します。
+処理順序は、構文の記述位置にかかわらず「`include`・`includefile`の展開 → deleteによる削除 → replaceによる置換」です。通常のプロンプト欄の指定は通常のプロンプトに、Negativeプロンプト欄の指定はNegativeプロンプトに適用されます。指定は、展開したファイル本文やincludeした内容、WebUIの選択欄から適用するスタイルの内容にも作用します。
 
 delete・replaceはスタイル内にも記述できます。使用するスタイルに含まれる指定は、そのスタイルの内容だけでなく、同じ側の入力プロンプトと他のスタイルの内容にも適用されます。
 
@@ -164,8 +190,8 @@ ADetailer拡張機能の「ADetailer prompt」および「ADetailer negative pro
 - 循環するincludeは検出され、循環した参照だけが警告付きで空文字に置き換わります。展開深度は100、展開後の文字列は1,000,000文字までです。制限を超えるスタイル参照は警告付きで空文字になります。入力プロンプトの展開やdelete・replaceの結果が上限を超える場合は、本拡張機能の前処理をエラーとして中断し、共有スタイルと入力プロンプトを変更しません。
 - delete・replaceの指示だけを含むスタイルも使用できます。指示を取り除いた後の内容が空でも、スタイル内の指示文字列は残りません。
 - `prompt`と`negative_prompt`がリスト形式の場合は各要素を展開します。同じ生成処理のリスト全体に、入力欄と参照スタイルから集めた共通のdelete・replace指示を適用します。値が`None`の欄は空文字として扱います。
-- スタイル辞書は生成処理中だけ差し替え、`postprocess`または処理オブジェクトの`close`で元の辞書オブジェクトへ戻します。復元にはホストが正常なライフサイクルで`postprocess`または`close`を呼ぶことが必要です。
-- ADetailerの追加処理でも本拡張機能を実行させるため、前述のスクリプト指定が必要です。保存する生成情報の`ADetailer prompt`、`ADetailer negative prompt`と、末尾に番号が付いた同形式の項目でもincludeを展開します。
+- スタイル辞書は生成処理中だけ差し替え、`postprocess`または処理オブジェクトの`close`で元の辞書オブジェクトへ戻します。ADetailerが終了処理を省略する内部コピーの状態も、元の生成処理が終了するときに復元します。復元にはホストが元の生成処理の`postprocess`または`close`を呼ぶことが必要です。
+- ADetailerの追加処理でも本拡張機能を実行させるため、前述のスクリプト指定が必要です。保存する生成情報の`ADetailer prompt`、`ADetailer negative prompt`と、末尾に番号が付いた同形式の項目でもincludeとincludefileを展開します。番号は`2`のような数値と、`2nd`・`3rd`・`4th`のような序数の両方に対応します。
 
 ---
 

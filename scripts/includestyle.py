@@ -1,17 +1,22 @@
+import io
 import re
 import threading
+from pathlib import Path, PureWindowsPath
 from types import MethodType
 
 from modules import shared, styles, scripts
 
 
 RE_PAT_INCLUDE = r'([#$%]include\s*<([^>]*)>)'
+RE_PAT_INCLUDEFILE = r'([#$%]includefile\s*<([^>]*)>)'
+RE_PAT_EXPAND = r'([#$%](include|includefile)\s*<([^>]*)>)'
 RE_PAT_DELETE = r'([#$%]delete\s*<([^>]*)>)'
 RE_PAT_REPLACE = r'([#$%]replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
-RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+)?$'
+RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
 
 MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
+PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -35,15 +40,16 @@ class _IncludeResolver:
         self.cache = {}
         self.active = set()
         self.warned = set()
+        self.file_texts = {}
 
-    def _warning(self, key, reason):
-        warning = (key, reason)
+    def _warning(self, key, reason, kind='Style'):
+        warning = (kind, key, reason)
         if warning not in self.warned:
-            print(f'[IncludeStyle] Warning: Style "{key}": {reason}')
+            print(f'[IncludeStyle] Warning: {kind} "{key}": {reason}')
             self.warned.add(warning)
 
     def style_content(self, key, negative, depth=0):
-        cache_key = (key, negative)
+        cache_key = ('style', key, negative)
         if cache_key in self.active:
             self._warning(key, 'Circular include ignored.')
             return ''
@@ -69,12 +75,67 @@ class _IncludeResolver:
         self.cache[cache_key] = content
         return content
 
+    def file_content(self, key, negative, depth=0):
+        try:
+            relative = PureWindowsPath(key)
+            if not relative.parts or relative.is_absolute() or relative.drive or relative.root:
+                raise ValueError('An extension-relative filename is required.')
+            if '..' in relative.parts or relative.is_reserved() or any(':' in part for part in relative.parts):
+                raise ValueError('Paths outside the prompts folder are not allowed.')
+            root = PROMPTS_DIRECTORY.resolve()
+            path = root.joinpath(*relative.parts)
+            if path.suffix.lower() != '.txt':
+                path = path.with_name(path.name + '.txt')
+            # prompts 内のリンクから外部実体も読み、実体パスで循環とキャッシュを管理する
+            path = path.resolve()
+        except (OSError, ValueError, RuntimeError) as error:
+            self._warning(key, f'Invalid prompt file path: {error}', 'File')
+            return ''
+
+        cache_key = ('file', path, negative)
+        if cache_key in self.active:
+            self._warning(key, 'Circular include ignored.', 'File')
+            return ''
+        if depth >= MAX_INCLUDE_DEPTH:
+            self._warning(key, 'Include depth limit exceeded; reference ignored.', 'File')
+            return ''
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+
+        self.active.add(cache_key)
+        try:
+            if path not in self.file_texts:
+                # UTF-16 は BOM がある場合だけ判定し、本文の空白と改行を保持する
+                with path.open('rb') as binary:
+                    header = binary.read(2)
+                    binary.seek(0)
+                    encoding = 'utf-16' if header in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig'
+                    with io.TextIOWrapper(binary, encoding=encoding, newline='') as stream:
+                        self.file_texts[path] = stream.read(MAX_PROMPT_LENGTH + 1)
+            if len(self.file_texts[path]) > MAX_PROMPT_LENGTH:
+                raise ValueError('IncludeStyle prompt file length limit exceeded')
+            content = self.expand(self.file_texts[path], negative, depth + 1)
+        except (OSError, UnicodeError) as error:
+            self._warning(key, f'Cannot read prompt file: {error}', 'File')
+            content = ''
+        except ValueError:
+            self._warning(key, 'Expanded prompt length limit exceeded; reference ignored.', 'File')
+            content = ''
+        finally:
+            self.active.remove(cache_key)
+        self.cache[cache_key] = content
+        return content
+
     def expand(self, prompt, negative, depth=0):
         parts = []
         length = 0
         offset = 0
-        for found in re.finditer(RE_PAT_INCLUDE, prompt):
-            content = self.style_content(found[2].strip(), negative, depth).strip()
+        for found in re.finditer(RE_PAT_EXPAND, prompt):
+            key = found[3].strip()
+            if found[2] == 'includefile':
+                content = self.file_content(key, negative, depth)
+            else:
+                content = self.style_content(key, negative, depth).strip()
             literal = prompt[offset:found.start()]
             length += len(literal) + len(content)
             if length > MAX_PROMPT_LENGTH:
@@ -89,13 +150,15 @@ class _IncludeResolver:
 
 
 class _StyleState:
-    def __init__(self, database, source, working, original_close, owner):
+    def __init__(self, database, source, working, original_close, owner, file_texts, copied_from):
         self.database = database
         self.original = database.styles
         self.source = source
         self.working = working
         self.original_close = original_close
         self.owner = owner
+        self.file_texts = file_texts
+        self.copied_from = copied_from
         self.thread = threading.get_ident()
         self.active = True
 
@@ -122,7 +185,20 @@ def _close_processing(p, *args, **kwargs):
         return state.original_close(*args, **kwargs)
     finally:
         # ホストが例外で postprocess を省略しても close で復元する
-        _restore_styles(state)
+        _restore_processing(p)
+
+
+def _restore_processing(p):
+    state = getattr(p, _STATE_ATTRIBUTE, None)
+    if state is not None and state.owner is p:
+        # ADetailer が再開用コピーを閉じない場合も、元の処理の終了時に回収する
+        for child in list(reversed(_STYLE_STATES)):
+            ancestor = child.copied_from
+            while ancestor is not None and ancestor is not state:
+                ancestor = ancestor.copied_from
+            if ancestor is state:
+                _restore_styles(child)
+    _restore_styles(state)
 
 
 def _extract_rules(prompt, deletes, replacements):
@@ -176,6 +252,8 @@ class IncludeStyleScript(scripts.Script):
         state = getattr(p, _STATE_ATTRIBUTE, None)
         source = state.working if state is not None and state.active else shared.prompt_styles.styles
         resolver = _IncludeResolver(source)
+        if state is not None and state.active:
+            resolver.file_texts = state.file_texts
         params = getattr(p, 'extra_generation_params', None)
         if params:
             for key in params:
@@ -185,13 +263,13 @@ class IncludeStyleScript(scripts.Script):
                     params[key] = _map_prompts(params[key], lambda text: resolver.expand(text, negative))
 
     def postprocess(self, p, *args):
-        _restore_styles(getattr(p, _STATE_ATTRIBUTE, None))
+        _restore_processing(p)
 
     def before_process(self, p, *args):
         previous = getattr(p, _STATE_ATTRIBUTE, None)
         if previous is not None and previous.active and previous.owner is p:
             # 同じ処理オブジェクトの再実行では、前回の状態を残さない
-            _restore_styles(previous)
+            _restore_processing(p)
 
         _STYLE_LOCK.acquire()
         installed = False
@@ -243,7 +321,8 @@ class IncludeStyleScript(scripts.Script):
                 original_close = previous.original_close
                 if getattr(original_close, '__self__', None) is not None:
                     original_close = MethodType(original_close.__func__, p)
-            state = _StyleState(database, source, working, original_close, p)
+            copied_from = previous if previous is not None and previous.owner is not p else None
+            state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from)
             setattr(p, _STATE_ATTRIBUTE, state)
             if original_close is not None:
                 p.close = MethodType(_close_processing, p)

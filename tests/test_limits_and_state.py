@@ -77,6 +77,36 @@ class LimitsAndStateTests(unittest.TestCase):
         p.close()
         self.assertIs(self.shared.prompt_styles.styles, original)
 
+    def test_adetailer_resume_copy_without_close_is_restored_by_parent(self):
+        original = self.shared.prompt_styles.styles
+        parent = self.prompt('#include<base>')
+        self.script.before_process(parent)
+        self.script.postprocess(copy.copy(parent))
+        child = copy.copy(parent)
+        self.processing_objects.append(child)
+        self.script.before_process(child)
+        self.assertIsNot(self.shared.prompt_styles.styles, original)
+        self.script.postprocess(parent)
+        self.assertIs(self.shared.prompt_styles.styles, original)
+        self.assertEqual(self.module._STYLE_STATES, [])
+        child.close()
+        parent.close()
+        self.assertIs(self.shared.prompt_styles.styles, original)
+
+    def test_parent_close_recovers_unclosed_copy_after_exception(self):
+        original = self.shared.prompt_styles.styles
+        parent = self.prompt()
+        self.script.before_process(parent)
+        child = copy.copy(parent)
+        self.processing_objects.append(child)
+        self.script.before_process(child)
+        grandchild = copy.copy(child)
+        self.processing_objects.append(grandchild)
+        self.script.before_process(grandchild)
+        parent.close()
+        self.assertIs(self.shared.prompt_styles.styles, original)
+        self.assertEqual(self.module._STYLE_STATES, [])
+
     def test_depth_limit_warns_and_terminates(self):
         self.shared.prompt_styles.styles = {
             str(index): core.PromptStyle(str(index), f'x#include<{index + 1}>', '')
@@ -143,12 +173,18 @@ class LimitsAndStateTests(unittest.TestCase):
         p = self.prompt(extra={
             'ADetailer negative prompt 2': '$include<base>',
             'ADetailer prompt 3': ['%include<base>', 'plain'],
+            'ADetailer prompt 2nd': '#include<base>',
+            'ADetailer negative prompt 3rd': '$include<base>',
+            'ADetailer prompt 4th': '%include<base>',
             'ADetailer prompt count': 3,
             'Other prompt': '#include<base>',
         })
         self.script.process(p)
         self.assertEqual(p.extra_generation_params['ADetailer negative prompt 2'], '基本ネガ')
         self.assertEqual(p.extra_generation_params['ADetailer prompt 3'], ['基本', 'plain'])
+        self.assertEqual(p.extra_generation_params['ADetailer prompt 2nd'], '基本')
+        self.assertEqual(p.extra_generation_params['ADetailer negative prompt 3rd'], '基本ネガ')
+        self.assertEqual(p.extra_generation_params['ADetailer prompt 4th'], '基本')
         self.assertEqual(p.extra_generation_params['ADetailer prompt count'], 3)
         self.assertEqual(p.extra_generation_params['Other prompt'], '#include<base>')
 

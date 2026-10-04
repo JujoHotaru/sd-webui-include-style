@@ -54,6 +54,8 @@ class IncludeStyleTests(unittest.TestCase):
         host.shared = shared
         host.styles = types.SimpleNamespace(PromptStyle=PromptStyle)
         host.scripts = scripts
+        self.infotext_callbacks = []
+        host.script_callbacks = types.SimpleNamespace(on_infotext_pasted=self.infotext_callbacks.append)
         self.module_patch = mock.patch.dict(sys.modules, {"modules": host})
         self.module_patch.start()
         spec = importlib.util.spec_from_file_location("includestyle_test_target", SOURCE)

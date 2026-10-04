@@ -1,10 +1,11 @@
 import io
+import json
 import re
 import threading
 from pathlib import Path, PureWindowsPath
 from types import MethodType
 
-from modules import shared, styles, scripts
+from modules import shared, styles, scripts, script_callbacks
 
 
 RE_PAT_INCLUDE = r'([#$%]include\s*<([^>]*)>)'
@@ -17,6 +18,9 @@ RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
 MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
 PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
+ORIGINAL_PROMPT_KEY = 'Include-style original prompt'
+ORIGINAL_NEGATIVE_KEY = 'Include-style original negative prompt'
+_ORIGINAL_KEYS = (ORIGINAL_PROMPT_KEY, ORIGINAL_NEGATIVE_KEY)
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -32,6 +36,92 @@ def _map_prompts(value, transform):
 
 def _prompt_strings(value):
     return value if isinstance(value, list) else [value or '']
+
+
+def _has_commands(text):
+    return any(re.search(pattern, text or '') for pattern in
+               (RE_PAT_EXPAND, RE_PAT_DELETE, RE_PAT_REPLACE))
+
+
+class _OriginalPrompts:
+    def __init__(self, p, source, working, prompt, negative_prompt, previous):
+        self.styles = list(p.styles or [])
+        self.values = []
+        self.changed = []
+        self.outputs = tuple(_map_prompts(value, lambda text: text) for value in (prompt, negative_prompt))
+        inherited = previous.originals if previous is not None and previous.owner is not p else None
+        for side, (raw, result) in enumerate(zip((p.prompt, p.negative_prompt), self.outputs)):
+            raw = _map_prompts(raw, lambda text: text)
+            # ADetailer の再開用コピーには、既に解決済みの入力と親の原本が渡される
+            if inherited is not None and raw == inherited.outputs[side] and self.styles == inherited.styles:
+                self.values.append(inherited.values[side])
+                self.changed.append(inherited.changed[side])
+                continue
+            field = 'negative_prompt' if side else 'prompt'
+            selected_changed = any(
+                key in source and (
+                    _has_commands(getattr(source[key], field)) or
+                    (getattr(source[key], field) or '') != getattr(working[key], field)
+                ) for key in self.styles
+            )
+            flags = [selected_changed or _has_commands(text) or text != transformed
+                     for text, transformed in zip(_prompt_strings(raw), _prompt_strings(result))]
+            self.values.append(raw)
+            self.changed.append(flags)
+
+    def is_changed(self, side, index):
+        position = index if isinstance(self.values[side], list) else 0
+        return 0 <= position < len(self.changed[side]) and self.changed[side][position]
+
+    def value(self, side, index):
+        if not self.is_changed(side, index):
+            return None
+        raw = self.values[side]
+        position = index if isinstance(raw, list) else 0
+        text = raw[position] if isinstance(raw, list) else raw
+        # 標準の infotext の引用処理を通しても、空文字と前後空白を失わない
+        return json.dumps({'text': text}, ensure_ascii=False)
+
+
+def _original_index(p, fields):
+    if fields.get('use_main_prompt', False):
+        return 0
+    batch_size = getattr(p, 'batch_size', 1)
+    index = fields.get('index')
+    if index is None:
+        return fields.get('iteration', 0) * batch_size + fields.get('position_in_batch', 0)
+    all_prompts = fields.get('all_prompts')
+    if all_prompts is not None and (
+        all_prompts is getattr(p, 'all_prompts', None) or len(all_prompts) > batch_size
+    ):
+        return index
+    return getattr(p, 'iteration', 0) * batch_size + index
+
+
+def _update_original_metadata(p):
+    state = getattr(p, _STATE_ATTRIBUTE, None)
+    params = getattr(p, 'extra_generation_params', None)
+    if state is None or state.owner is not p or not state.metadata_valid or params is None:
+        return
+    originals = state.originals
+    for side, key in enumerate((ORIGINAL_PROMPT_KEY, ORIGINAL_NEGATIVE_KEY)):
+        params.pop(key, None)
+        if any(originals.changed[side]):
+            def value(side=side, **fields):
+                return originals.value(side, _original_index(p, fields))
+            params[key] = value
+
+
+def _on_infotext_pasted(_infotext, params):
+    for key, field in ((ORIGINAL_PROMPT_KEY, 'Prompt'), (ORIGINAL_NEGATIVE_KEY, 'Negative prompt')):
+        if key not in params or not isinstance(params[key], str):
+            continue
+        try:
+            payload = json.loads(params[key])
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get('text'), str):
+            params[field] = payload['text']
 
 
 class _IncludeResolver:
@@ -150,7 +240,7 @@ class _IncludeResolver:
 
 
 class _StyleState:
-    def __init__(self, database, source, working, original_close, owner, file_texts, copied_from):
+    def __init__(self, database, source, working, original_close, owner, file_texts, copied_from, originals):
         self.database = database
         self.original = database.styles
         self.source = source
@@ -159,6 +249,8 @@ class _StyleState:
         self.owner = owner
         self.file_texts = file_texts
         self.copied_from = copied_from
+        self.originals = originals
+        self.metadata_valid = True
         self.thread = threading.get_ident()
         self.active = True
 
@@ -265,8 +357,20 @@ class IncludeStyleScript(scripts.Script):
     def postprocess(self, p, *args):
         _restore_processing(p)
 
+    def postprocess_batch(self, p, images, **kwargs):
+        _update_original_metadata(p)
+
     def before_process(self, p, *args):
         previous = getattr(p, _STATE_ATTRIBUTE, None)
+        if previous is not None and previous.owner is p:
+            previous.metadata_valid = False
+        params = getattr(p, 'extra_generation_params', None)
+        if params is not None:
+            # 浅いコピーの再入処理で親の生成情報を消さない
+            if previous is not None and previous.owner is not p:
+                params = p.extra_generation_params = dict(params)
+            for key in _ORIGINAL_KEYS:
+                params.pop(key, None)
         if previous is not None and previous.active and previous.owner is p:
             # 同じ処理オブジェクトの再実行では、前回の状態を残さない
             _restore_processing(p)
@@ -322,7 +426,8 @@ class IncludeStyleScript(scripts.Script):
                 if getattr(original_close, '__self__', None) is not None:
                     original_close = MethodType(original_close.__func__, p)
             copied_from = previous if previous is not None and previous.owner is not p else None
-            state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from)
+            originals = _OriginalPrompts(p, source, working, prompt, negative_prompt, previous)
+            state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from, originals)
             setattr(p, _STATE_ATTRIBUTE, state)
             if original_close is not None:
                 p.close = MethodType(_close_processing, p)
@@ -334,3 +439,6 @@ class IncludeStyleScript(scripts.Script):
             # 展開に失敗した場合は共有データを変更せず、ロックを解放する
             if not installed:
                 _STYLE_LOCK.release()
+
+
+script_callbacks.on_infotext_pasted(_on_infotext_pasted)

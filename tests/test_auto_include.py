@@ -85,13 +85,13 @@ class AutoIncludeTests(unittest.TestCase):
     def test_command_and_prompt_placeholder_regions_are_protected(self):
         self.shared.prompt_styles.styles["hair"] = core.PromptStyle("hair", "black hair", "")
         raw = (
-            "#include<black hair> $includefile<black hair> %delete<black hair> "
+            "#include<black hair> $includefile<black hair> #inc<black hair> %file < black hair > %delete<black hair> "
             "#replace<black hair|red hair> {prompt} (black hair) __black hair__"
         )
         text = raw + "\nNegative prompt: n\nSteps: 1, Seed: 2, Size: 8x8"
         parsed = self._paste(text, {"Prompt": raw, "Negative prompt": "n"})
         self.assertEqual(parsed["Prompt"], (
-            "#include<black hair> $includefile<black hair> %delete<black hair> "
+            "#include<black hair> $includefile<black hair> #inc<black hair> %file < black hair > %delete<black hair> "
             "#replace<black hair|red hair> {prompt} (#include<hair>) __#include<hair>__"
         ))
 
@@ -102,6 +102,8 @@ class AutoIncludeTests(unittest.TestCase):
             "negative-command": core.PromptStyle("negative-command", "black hair", "#replace<a|b>"),
             "placeholder": core.PromptStyle("placeholder", "black hair", "{prompt}"),
             "include": core.PromptStyle("include", "black hair", "#include<base>"),
+            "inc": core.PromptStyle("inc", "black hair", "$inc<base>"),
+            "file": core.PromptStyle("file", "black hair", "%file<base>"),
             "valid": core.PromptStyle("valid", "black hair", ""),
         })
         parsed = self._paste(

@@ -8,9 +8,9 @@ from types import MethodType
 from modules import shared, styles, scripts, script_callbacks
 
 
-RE_PAT_INCLUDE = r'([#$%]include\s*<([^>]*)>)'
-RE_PAT_INCLUDEFILE = r'([#$%]includefile\s*<([^>]*)>)'
-RE_PAT_EXPAND = r'([#$%](include|includefile)\s*<([^>]*)>)'
+RE_PAT_INCLUDE = r'([#$%](?:include|inc)\s*<([^>]*)>)'
+RE_PAT_INCLUDEFILE = r'([#$%](?:includefile|file)\s*<([^>]*)>)'
+RE_PAT_EXPAND = r'([#$%](include|inc|includefile|file)\s*<([^>]*)>)'
 RE_PAT_DELETE = r'([#$%]delete\s*<([^>]*)>)'
 RE_PAT_REPLACE = r'([#$%]replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
 RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
@@ -307,7 +307,7 @@ class _IncludeResolver:
         offset = 0
         for found in re.finditer(RE_PAT_EXPAND, prompt):
             key = found[3].strip()
-            if found[2] == 'includefile':
+            if found[2] in ('includefile', 'file'):
                 content = self.file_content(key, negative, depth)
             else:
                 content = self.style_content(key, negative, depth)

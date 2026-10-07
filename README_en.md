@@ -40,6 +40,8 @@ The four syntax forms below are available. In each form, you can replace the lea
 | `#delete<Text to Delete>` | Deletes all occurrences of the specified text |
 | `#replace<Old Text\|New Text>` | Replaces all occurrences of the specified text |
 
+You can shorten `include` to `inc` and `includefile` to `file`. For example, `#inc<Long Black Hair>` produces the same result as `#include<Long Black Hair>`, and `#file<foobar>` produces the same result as `#includefile<foobar>`. Both aliases support `#`, `$`, and `%`, including forms such as `$inc < Long Black Hair >` and `%file<foobar.txt>`. You can use them in positive and negative prompts, styles, file contents, and ADetailer, and mix them with the original command names. The examples and restrictions below also apply to the aliases.
+
 You can include spaces between the command and `<`, and around the argument, as in `#include < Style Name >`. Spaces around the argument are removed; spaces within it are kept. Style names and delete/replace targets are case-sensitive.
 
 After nested references are expanded, leading and trailing whitespace (spaces, tabs, newlines, and similar characters) is removed from text inserted by `include` and `includefile`. Whitespace within the inserted text and around commands in the input prompt is preserved.

@@ -59,6 +59,53 @@ class IncludeFileTests(unittest.TestCase):
                 self.assertEqual(p.negative_prompt, 'body \t\r\nend')
                 self.script.postprocess(p)
 
+    def test_file_alias_markers_paths_nested_styles_and_adetailer(self):
+        self.write_prompt('日本語.txt', ' \t#inc<base> / $include<base>\r\n')
+        self.write_prompt('nested/child.txt', '%file<日本語> + #includefile<日本語.txt>')
+        self.shared.prompt_styles.styles['bridge'] = core.PromptStyle(
+            'bridge', '#file<nested/child>', '$file<nested\\child.txt>',
+        )
+        for marker in ('#', '$', '%'):
+            with self.subTest(marker=marker):
+                p = self.prompt(
+                    [f'{marker}file < nested/child >', '#inc<bridge>'],
+                    f'{marker}file < nested\\child.txt >',
+                    extra={'ADetailer prompt': f'{marker}file<日本語>',
+                           'ADetailer negative prompt 3rd': [f'{marker}file<日本語.txt>']},
+                )
+                self.script.before_process(p)
+                self.script.process(p)
+                self.assertEqual(p.prompt, ['基本 / 基本 + 基本 / 基本'] * 2)
+                self.assertEqual(p.negative_prompt, '基本ネガ / 基本ネガ + 基本ネガ / 基本ネガ')
+                self.assertEqual(p.extra_generation_params['ADetailer prompt'], '基本 / 基本')
+                self.assertEqual(p.extra_generation_params['ADetailer negative prompt 3rd'],
+                                 ['基本ネガ / 基本ネガ'])
+                self.script.postprocess(p)
+
+    def test_file_alias_rules_and_mixed_name_cycle(self):
+        self.write_prompt('rules.txt', '#delete<remove>#replace<red|pink>red remove')
+        self.write_prompt('cycle.txt', '#includefile<cycle> kept')
+        p = self.prompt('#file<rules>', '%file<cycle>')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.script.before_process(p)
+        self.assertEqual(p.prompt, 'pink ')
+        self.assertEqual(p.negative_prompt, 'kept')
+        self.assertIn('Circular include', output.getvalue())
+
+    def test_file_alias_invalid_missing_and_unknown_command_names(self):
+        for marker in ('#', '$', '%'):
+            with self.subTest(marker=marker):
+                p = self.prompt(f'{marker}file<missing> {marker}file<../outside> '
+                                f'{marker}FILE<base> {marker}filename<base>')
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.script.before_process(p)
+                self.assertEqual(p.prompt, f'  {marker}FILE<base> {marker}filename<base>')
+                self.assertIn('Cannot read prompt file', output.getvalue())
+                self.assertIn('Invalid prompt file path', output.getvalue())
+                self.script.postprocess(p)
+
     def test_nested_references_and_whitespace_only_files_are_trimmed(self):
         self.write_prompt('empty.txt', ' \t\r\n\u3000')
         self.write_prompt('inner.txt', ' \t\r\ninside\u3000')

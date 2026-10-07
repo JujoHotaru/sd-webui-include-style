@@ -100,6 +100,47 @@ class IncludeStyleTests(unittest.TestCase):
         self.assertEqual(p.prompt, "left  right")
         self.assertIn("存在しない", output.getvalue())
 
+    def test_inc_alias_markers_nested_styles_and_adetailer(self):
+        self.shared.prompt_styles.styles.update({
+            "日本語": PromptStyle("日本語", "#inc<base> / $include<base>", "%inc<base>"),
+            "選択": PromptStyle("選択", "$inc<日本語>", "#inc<日本語>"),
+        })
+        for marker in ("#", "$", "%"):
+            with self.subTest(marker=marker):
+                p = self.prompt(f"({marker}inc < 日本語 >:1.3)",
+                                f"{{{marker}inc<日本語>|plain}}", selected=["選択"],
+                                extra={"ADetailer prompt 2nd": f"{marker}inc<日本語>",
+                                       "ADetailer negative prompt": [f"{marker}inc<日本語>"]})
+                self.script.before_process(p)
+                self.script.process(p)
+                self.assertEqual(p.prompt, "(基本 / 基本:1.3)")
+                self.assertEqual(p.negative_prompt, "{基本ネガ|plain}")
+                self.assertEqual(self.shared.prompt_styles.styles["選択"].prompt, "基本 / 基本")
+                self.assertEqual(self.shared.prompt_styles.styles["選択"].negative_prompt, "基本ネガ")
+                self.assertEqual(p.extra_generation_params["ADetailer prompt 2nd"], "基本 / 基本")
+                self.assertEqual(p.extra_generation_params["ADetailer negative prompt"], ["基本ネガ"])
+                self.script.postprocess(p)
+
+    def test_inc_alias_collects_rules_from_opposite_style_field(self):
+        self.shared.prompt_styles.styles["rules"] = PromptStyle(
+            "rules", "#replace<red|pink>", "#delete<bad>",
+        )
+        p = self.prompt("red", "bad keep $inc<rules>")
+        self.script.before_process(p)
+        self.assertEqual(p.prompt, "pink")
+        self.assertEqual(p.negative_prompt, " keep ")
+
+    def test_inc_alias_missing_references_and_unknown_command_names(self):
+        for marker in ("#", "$", "%"):
+            with self.subTest(marker=marker):
+                p = self.prompt(f"{marker}inc<存在しない> {marker}INC<base> {marker}increment<base>")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.script.before_process(p)
+                self.assertEqual(p.prompt, f" {marker}INC<base> {marker}increment<base>")
+                self.assertIn("存在しない", output.getvalue())
+                self.script.postprocess(p)
+
     def test_include_trims_edges_and_preserves_internal_and_surrounding_whitespace(self):
         self.shared.prompt_styles.styles["spacing"] = PromptStyle(
             "spacing", " \t\r\nbody \t\r\nend\u3000", "\u3000bad\t \nbad end\r\n",

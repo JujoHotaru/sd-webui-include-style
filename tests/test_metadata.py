@@ -33,6 +33,7 @@ class IncludeStyleMetadataTests(unittest.TestCase):
             ("#include<base>", "plain"),
             ("plain", "#include<base>"),
             ("#include<base>", "#include<base>"),
+            ("#inc < base >", "$inc<base>"),
         ]
         for positive, negative in cases:
             with self.subTest(positive=positive, negative=negative):
@@ -214,13 +215,21 @@ class IncludeStyleMetadataTests(unittest.TestCase):
     def test_file_commands_record_both_raw_fields(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder, 'sample.txt').write_text('#include<base>', encoding='utf-8')
-            p = self.prompt('$includefile<sample>', '%includefile<sample.txt>')
-            with mock.patch.object(self.module, 'PROMPTS_DIRECTORY', Path(folder)):
-                self.script.before_process(p)
-            self.script.postprocess_batch(p, [], batch_number=0)
-            payload = self._capture(p, index=0, use_main_prompt=True)
-            self.assertEqual(payload['prompt'], '$includefile<sample>')
-            self.assertEqual(payload['negative prompt'], '%includefile<sample.txt>')
+            for command in ('includefile', 'file'):
+                with self.subTest(command=command):
+                    positive, negative = f'${command}<sample>', f'%{command}<sample.txt>'
+                    p = self.prompt(positive, negative)
+                    with mock.patch.object(self.module, 'PROMPTS_DIRECTORY', Path(folder)):
+                        self.script.before_process(p)
+                    self.script.postprocess_batch(p, [], batch_number=0)
+                    payload = self._capture(p, index=0, use_main_prompt=True)
+                    self.assertEqual(payload['prompt'], positive)
+                    self.assertEqual(payload['negative prompt'], negative)
+                    parsed = {self.module.METADATA_KEY: json.dumps(payload)}
+                    self.module._on_infotext_pasted('', parsed)
+                    self.assertEqual(parsed['Prompt'], positive)
+                    self.assertEqual(parsed['Negative prompt'], negative)
+                    self.script.postprocess(p)
 
     def test_failed_reuse_cannot_publish_previous_generation_metadata(self):
         p = self.prompt('#include<base>')

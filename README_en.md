@@ -36,7 +36,7 @@ The four syntax forms below are available. In each form, you can replace the lea
 | Syntax | Action |
 | --- | --- |
 | `#include<Style Name>` | Inserts the style contents at this position |
-| `#includefile<File Name>` | Inserts a text file from the `prompts` folder at this position |
+| `#includefile<File Name>` | Inserts a text file from the `prompts` folder; commands in the file can route text to the positive and negative fields |
 | `#delete<Text to Delete>` | Deletes all occurrences of the specified text |
 | `#replace<Old Text\|New Text>` | Replaces all occurrences of the specified text |
 
@@ -73,7 +73,7 @@ Writing the following in a prompt inserts the contents of the specified style. Y
 1girl, black hair, long hair, in school, wearing school uniform
 ```
 
-In a negative prompt, the style's `negative_prompt` field is inserted. In the positive prompt field, only its `prompt` field is inserted. To use both, write an include in each field.
+In a negative prompt, the style's `negative_prompt` field is inserted. In the positive prompt field, its `prompt` field is inserted. To include both fields, write an include in each field. However, if a file referenced by the style contains the insertion-target commands described below, text routed to the opposite field is also appended there.
 
 ```
 #include<Default Negative Prompt>
@@ -101,7 +101,7 @@ Prompt : 1girl, black hair, long hair, in school, wearing school uniform
 Negative prompt : EasyNegative, bad face
 ```
 
-Include expansion is simple text replacement and does not add separators such as commas. This lets you combine it with prompt emphasis/weighting and Dynamic Prompts. Expansion happens during generation; the extension does not change the text displayed in the input fields or the contents of style files.
+Include expansion is simple text replacement and does not add separators such as commas. The exception is appending to the opposite field with the insertion-target commands described below, which uses `, `. Insertion at the specified position adds no separator, so you can combine it with prompt emphasis/weighting and Dynamic Prompts. Expansion happens during generation; the extension does not change the text displayed in the input fields or the contents of style files.
 
 In the example below, the prompt inserted by “Long Black Hair” (`black hair, long hair`) is assigned 1.3x emphasis.
 
@@ -147,11 +147,68 @@ Write the following in a prompt to insert the text with its surrounding whitespa
 1girl, black hair, long hair
 ```
 
-You can specify a relative path containing a subfolder, such as `foo/bar`, and you can also use the Windows path separator `\`. All file references are resolved from `prompts`. Whitespace at the beginning and end of file contents is removed; spaces, tabs, and newlines within the contents are preserved. The BOM is not included in the prompt. Files without a BOM are read as UTF-8; UTF-16 is not guessed. File contents can also contain `#include` and `#includefile`. Nested `includefile` references are always resolved from the `prompts` folder. Style references in file contents use the style's `prompt` field in positive prompts and its `negative_prompt` field in negative prompts. The file contents themselves are shared by both fields.
+You can specify a relative path containing a subfolder, such as `foo/bar`, and you can also use the Windows path separator `\`. All file references are resolved from `prompts`. Whitespace at the beginning and end of file contents is removed; spaces, tabs, and newlines within the contents are preserved. The BOM is not included in the prompt. Files without a BOM are read as UTF-8; UTF-16 is not guessed. File contents can also contain `#include` and `#includefile`. Nested `includefile` references are always resolved from the `prompts` folder. Style references in file contents use the style's `prompt` field when the current insertion target is positive, and its `negative_prompt` field when the target is negative.
 
 File names must be relative paths based on the `prompts` folder. If a file or subfolder inside `prompts` is a symbolic link, its target is read, even when the target is outside `prompts`. References in file contents continue to be resolved from `prompts`. Absolute paths, drive specifications, `..`, alternate data streams, and device names are not allowed. If a file is missing, cannot be read (for example, because a link is broken), or has an invalid path, a warning is issued and that reference is replaced with an empty string.
 
 You can use `#includefile` in styles and ADetailer's additional prompt fields as well. You can also apply `delete` and `replace` to the inserted text. Changes to a file take effect on the next generation.
+
+### Routing file contents to positive and negative fields
+
+A line containing only `##positive##` or `##negative##` changes the insertion target for the text that follows it. These are called insertion-target commands. `##positive##` selects the positive field, and `##negative##` selects the negative field. Commands are case-sensitive. A line with surrounding spaces or other text is treated as ordinary content. LF, CRLF, and CR line endings are supported. The command line and its following line ending are removed.
+
+Before the first command, the target is the field containing the file reference. Commands can appear in any order, any number of times, including consecutive repetitions. Without commands, the entire file is inserted at the reference as before. If all commands select the calling field, the entire file is inserted with the command lines removed.
+
+Sections for the same side are concatenated in order, preserving their internal whitespace and newlines. When each file reference is inserted, leading and trailing whitespace is removed separately from its positive and negative text. Text for the calling side replaces the directive. Text for the opposite side is appended to that prompt with `, ` as a separator. Empty additions are skipped, and no comma is added before text appended to an empty prompt. No separator is added between sections for the same side or at the directive's position.
+
+For example, save this as `prompts/character.txt`:
+
+```text
+black hair, long hair,
+##negative##
+bad anatomy
+##positive##
+blue eyes
+```
+
+| Field | Input | Expanded result |
+| --- | --- | --- |
+| Positive | `1girl, #file<character>, outdoors` | `1girl, black hair, long hair,` + newline + `blue eyes, outdoors` |
+| Negative | `low quality` | `low quality, bad anatomy` |
+
+If the file is referenced from the negative field, the initial `black hair, long hair,` also goes to the negative side. The `blue eyes` after `##positive##` is appended to the positive prompt. Command meanings are fixed regardless of the calling field. Text after the directive in a regular prompt or style stays in its original field.
+
+### Inheriting the target from a nested file
+
+A child file's final insertion target also applies to the remaining text in its parent file. If the child has no commands, the target stays unchanged. The next command in the parent can select a new target.
+
+For example, create `prompts/parent.txt` and `prompts/child.txt` as follows.
+
+`parent.txt`:
+
+```text
+black hair,
+#file<child>
+blurry
+##positive##
+blue eyes
+```
+
+`child.txt`:
+
+```text
+##negative##
+bad anatomy,
+```
+
+| Field | Input | Expanded result |
+| --- | --- | --- |
+| Positive | `#file<parent>` | `black hair,` + newline + `blue eyes` |
+| Negative | `low quality` | `low quality, bad anatomy,` + newline + `blurry` |
+
+Files used in styles route text to both sides in the same way. For styles applied through WebUI's style selector, routed text is combined into the corresponding fields of that style before it is applied. In ADetailer, text is appended to the opposite field for the same additional processing pass. With prompts for multiple images, the corresponding positive and negative inputs are processed as a pair for each image.
+
+The `delete` and `replace` commands in a file apply to their final insertion side. For example, a `#delete` after `##negative##` affects the negative side even if the file was referenced from the positive field. As before, `delete` and `replace` may remain in ADetailer's saved generation parameters when those parameters are expanded directly.
 
 ## Using delete and replace
 
@@ -191,7 +248,7 @@ When a command from this extension is used in either prompt field or in a select
 - The negative prompt before expansion
 - The styles selected during generation
 
-If a command was used in either field, both prompts and the style selection are saved together. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
+If a command was used in either field, both prompts and the style selection are saved together. If insertion-target commands append file text to the opposite side, the saved inputs for both fields are still their original contents before the append. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
 
 This works with PNG, JPEG, and WebP. Enable WebUI's image metadata saving setting.
 

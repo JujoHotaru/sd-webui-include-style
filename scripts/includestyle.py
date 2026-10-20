@@ -14,6 +14,7 @@ RE_PAT_EXPAND = r'([#$%](include|inc|includefile|file)\s*<([^>]*)>)'
 RE_PAT_DELETE = r'([#$%]delete\s*<([^>]*)>)'
 RE_PAT_REPLACE = r'([#$%]replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
 RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
+RE_PAT_FILE_POSITION = r'(?<![^\r\n])##(?P<position>positive|negative)##(?:\r\n|\r|\n|$)'
 
 MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
@@ -42,6 +43,40 @@ def _has_commands(text):
                (RE_PAT_EXPAND, RE_PAT_DELETE, RE_PAT_REPLACE))
 
 
+def _append_prompt(text, addition):
+    if not addition:
+        return text
+    separator = ', ' if text else ''
+    if len(text) + len(separator) + len(addition) > MAX_PROMPT_LENGTH:
+        raise ValueError('IncludeStyle expanded prompt length limit exceeded')
+    return text + separator + addition
+
+
+class _Expansion:
+    def __init__(self, texts, end_negative):
+        self.texts = tuple(texts)
+        self.end_negative = end_negative
+
+
+def _combine_prompt_pair(values, expanded):
+    outputs = []
+    for side in (0, 1):
+        own, opposite = expanded[side], expanded[1 - side]
+        has_additions = any(result.texts[side] for result in opposite)
+        own_list, other_list = (isinstance(values[index], list) for index in (side, 1 - side))
+        if has_additions and own_list and other_list and len(own) != len(opposite):
+            raise ValueError('IncludeStyle requires matching positive and negative prompt list lengths')
+        count = len(opposite) if has_additions and not own_list and other_list else len(own)
+        texts = []
+        for index in range(count):
+            text = own[index if own_list else 0].texts[side]
+            if has_additions:
+                text = _append_prompt(text, opposite[index if other_list else 0].texts[side])
+            texts.append(text)
+        outputs.append(texts if own_list or count != 1 else texts[0])
+    return tuple(outputs)
+
+
 class _OriginalPrompts:
     def __init__(self, p, source, working, prompt, negative_prompt, previous):
         self.styles = list(p.styles or [])
@@ -63,13 +98,16 @@ class _OriginalPrompts:
                     (getattr(source[key], field) or '') != getattr(working[key], field)
                 ) for key in self.styles
             )
-            flags = [selected_changed or _has_commands(text) or text != transformed
-                     for text, transformed in zip(_prompt_strings(raw), _prompt_strings(result))]
+            raw_texts = _prompt_strings(raw)
+            flags = []
+            for index, transformed in enumerate(_prompt_strings(result)):
+                text = raw_texts[index if isinstance(raw, list) else 0]
+                flags.append(selected_changed or _has_commands(text) or text != transformed)
             self.values.append(raw)
             self.changed.append(flags)
 
     def is_changed(self, side, index):
-        position = index if isinstance(self.values[side], list) else 0
+        position = index if isinstance(self.outputs[side], list) else 0
         return 0 <= position < len(self.changed[side]) and self.changed[side][position]
 
     def value(self, index):
@@ -224,33 +262,41 @@ class _IncludeResolver:
             self.warned.add(warning)
 
     def style_content(self, key, negative, depth=0):
+        return self._style_result(key, negative, depth).texts[negative]
+
+    def _style_result(self, key, negative, depth=0):
+        empty = _Expansion(('', ''), negative)
         cache_key = ('style', key, negative)
         if cache_key in self.active:
             self._warning(key, 'Circular include ignored.')
-            return ''
+            return empty
         if depth >= MAX_INCLUDE_DEPTH:
             self._warning(key, 'Include depth limit exceeded; reference ignored.')
-            return ''
+            return empty
         if cache_key in self.cache:
             return self.cache[cache_key]
         if key not in self.source:
             self._warning(key, 'not found!')
-            return ''
+            return empty
 
         style = self.source[key]
         content = (style.negative_prompt if negative else style.prompt) or ''
         self.active.add(cache_key)
         try:
-            content = self.expand(content, negative, depth + 1)
+            content = self._expand_result(content, negative, depth + 1)
         except ValueError:
             self._warning(key, 'Expanded prompt length limit exceeded; reference ignored.')
-            content = ''
+            content = empty
         finally:
             self.active.remove(cache_key)
         self.cache[cache_key] = content
         return content
 
     def file_content(self, key, negative, depth=0):
+        return self._file_result(key, negative, depth).texts[negative]
+
+    def _file_result(self, key, negative, depth=0):
+        empty = _Expansion(('', ''), negative)
         try:
             relative = PureWindowsPath(key)
             if not relative.parts or relative.is_absolute() or relative.drive or relative.root:
@@ -265,15 +311,15 @@ class _IncludeResolver:
             path = path.resolve()
         except (OSError, ValueError, RuntimeError) as error:
             self._warning(key, f'Invalid prompt file path: {error}', 'File')
-            return ''
+            return empty
 
         cache_key = ('file', path, negative)
-        if cache_key in self.active:
+        if any(('file', path, side) in self.active for side in (False, True)):
             self._warning(key, 'Circular include ignored.', 'File')
-            return ''
+            return empty
         if depth >= MAX_INCLUDE_DEPTH:
             self._warning(key, 'Include depth limit exceeded; reference ignored.', 'File')
-            return ''
+            return empty
         if cache_key in self.cache:
             return self.cache[cache_key]
 
@@ -289,44 +335,78 @@ class _IncludeResolver:
                         self.file_texts[path] = stream.read(MAX_PROMPT_LENGTH + 1)
             if len(self.file_texts[path]) > MAX_PROMPT_LENGTH:
                 raise ValueError('IncludeStyle prompt file length limit exceeded')
-            content = self.expand(self.file_texts[path], negative, depth + 1)
+            content = self._expand_result(self.file_texts[path], negative, depth + 1, file_mode=True)
         except (OSError, UnicodeError) as error:
             self._warning(key, f'Cannot read prompt file: {error}', 'File')
-            content = ''
+            content = empty
         except ValueError:
             self._warning(key, 'Expanded prompt length limit exceeded; reference ignored.', 'File')
-            content = ''
+            content = empty
         finally:
             self.active.remove(cache_key)
         self.cache[cache_key] = content
         return content
 
     def expand(self, prompt, negative, depth=0):
-        parts = []
-        length = 0
+        return self._expand_result(prompt, negative, depth).texts[negative]
+
+    def expand_pair(self, prompt, negative_prompt):
+        values = (prompt, negative_prompt)
+        expanded = [[self._expand_result(text or '', bool(side)) for text in _prompt_strings(value)]
+                    for side, value in enumerate(values)]
+        return _combine_prompt_pair(values, expanded)
+
+    def style_pair(self, key):
+        expanded = [self._style_result(key, bool(side)) for side in (0, 1)]
+        texts = []
+        for side in (0, 1):
+            try:
+                texts.append(_append_prompt(expanded[side].texts[side], expanded[1 - side].texts[side]))
+            except ValueError:
+                self._warning(key, 'Expanded prompt length limit exceeded; reference ignored.')
+                texts.append('')
+        return tuple(texts)
+
+    def _expand_result(self, prompt, negative, depth=0, file_mode=False):
+        parts = [[], []]
+        lengths = [0, 0]
         offset = 0
-        for found in re.finditer(RE_PAT_EXPAND, prompt):
+        current = negative
+
+        def emit(text, side):
+            # ファイル内は節をそのまま連結し、欄をまたぐ独立した参照間だけを区切る
+            if text and not file_mode and side != negative and lengths[side]:
+                text = ', ' + text
+            lengths[side] += len(text)
+            if lengths[side] > MAX_PROMPT_LENGTH:
+                raise ValueError('IncludeStyle expanded prompt length limit exceeded')
+            parts[side].append(text)
+
+        pattern = RE_PAT_EXPAND + '|' + RE_PAT_FILE_POSITION if file_mode else RE_PAT_EXPAND
+        for found in re.finditer(pattern, prompt):
+            emit(prompt[offset:found.start()], current)
+            if file_mode and found['position'] is not None:
+                current = found['position'] == 'negative'
+                offset = found.end()
+                continue
             key = found[3].strip()
             if found[2] in ('includefile', 'file'):
-                content = self.file_content(key, negative, depth)
+                content = self._file_result(key, current, depth)
+                next_side = content.end_negative if file_mode else current
             else:
-                content = self.style_content(key, negative, depth)
-            content = content.strip()
-            literal = prompt[offset:found.start()]
-            length += len(literal) + len(content)
-            if length > MAX_PROMPT_LENGTH:
-                raise ValueError('IncludeStyle expanded prompt length limit exceeded')
-            parts.extend((literal, content))
+                content = self._style_result(key, current, depth)
+                next_side = current
+            for side in (0, 1):
+                emit(content.texts[side].strip(), side)
+            current = next_side
             offset = found.end()
-        length += len(prompt) - offset
-        if length > MAX_PROMPT_LENGTH:
-            raise ValueError('IncludeStyle expanded prompt length limit exceeded')
-        parts.append(prompt[offset:])
-        return ''.join(parts)
+        emit(prompt[offset:], current)
+        return _Expansion((''.join(part) for part in parts), current)
 
 
 class _StyleState:
-    def __init__(self, database, source, working, original_close, owner, file_texts, copied_from, originals):
+    def __init__(self, database, source, working, original_close, owner, file_texts, copied_from, originals,
+                 style_results):
         self.database = database
         self.original = database.styles
         self.source = source
@@ -334,6 +414,7 @@ class _StyleState:
         self.original_close = original_close
         self.owner = owner
         self.file_texts = file_texts
+        self.style_results = style_results
         self.copied_from = copied_from
         self.originals = originals
         self.metadata_valid = True
@@ -432,13 +513,25 @@ class IncludeStyleScript(scripts.Script):
         resolver = _IncludeResolver(source)
         if state is not None and state.active:
             resolver.file_texts = state.file_texts
+            resolver.cache.update(state.style_results)
         params = getattr(p, 'extra_generation_params', None)
         if params:
-            for key in params:
+            groups = {}
+            for key in list(params):
                 found = re.fullmatch(RE_PAT_ADETAILER, key)
                 if found and isinstance(params[key], (str, list)):
-                    negative = bool(found[1])
-                    params[key] = _map_prompts(params[key], lambda text: resolver.expand(text, negative))
+                    suffix = key[len('ADetailer negative ') if found[1] else len('ADetailer '):]
+                    groups.setdefault(suffix, {})[bool(found[1])] = key
+            updates = {}
+            for suffix, keys in groups.items():
+                positive_key = keys.get(False, 'ADetailer ' + suffix)
+                negative_key = keys.get(True, 'ADetailer negative ' + suffix)
+                values = tuple(params[keys[side]] if side in keys else '' for side in (False, True))
+                prompt, negative_prompt = resolver.expand_pair(*values)
+                for side, (key, value) in enumerate(((positive_key, prompt), (negative_key, negative_prompt))):
+                    if side in keys or (key not in params and value):
+                        updates[key] = value
+            params.update(updates)
 
     def postprocess(self, p, *args):
         _restore_processing(p)
@@ -470,7 +563,7 @@ class IncludeStyleScript(scripts.Script):
                 source = _STYLE_STATES[-1].source
             resolver = _IncludeResolver(source)
             working = {
-                key: _new_style(style, resolver.style_content(key, False), resolver.style_content(key, True))
+                key: _new_style(style, *resolver.style_pair(key))
                 for key, style in source.items()
             }
 
@@ -481,8 +574,7 @@ class IncludeStyleScript(scripts.Script):
             used_styles.extend(p.styles or [])
             used_styles = list(dict.fromkeys(used_styles))
 
-            prompt = _map_prompts(p.prompt, lambda text: resolver.expand(text, False))
-            negative_prompt = _map_prompts(p.negative_prompt, lambda text: resolver.expand(text, True))
+            prompt, negative_prompt = resolver.expand_pair(p.prompt, p.negative_prompt)
             deletes, negative_deletes = [], []
             replacements, negative_replacements = [], []
 
@@ -512,7 +604,19 @@ class IncludeStyleScript(scripts.Script):
                     original_close = MethodType(original_close.__func__, p)
             copied_from = previous if previous is not None and previous.owner is not p else None
             originals = _OriginalPrompts(p, source, working, prompt, negative_prompt, previous)
-            state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from, originals)
+            style_results = {}
+            for key in source:
+                for negative in (False, True):
+                    result = resolver._style_result(key, negative)
+                    texts = []
+                    for side, text in enumerate(result.texts):
+                        if key in used_styles:
+                            text = _extract_rules(text, [], [])
+                        texts.append(_apply_rules(text, negative_deletes if side else deletes,
+                                                  negative_replacements if side else replacements))
+                    style_results[('style', key, negative)] = _Expansion(texts, result.end_negative)
+            state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from,
+                                originals, style_results)
             setattr(p, _STATE_ATTRIBUTE, state)
             if original_close is not None:
                 p.close = MethodType(_close_processing, p)

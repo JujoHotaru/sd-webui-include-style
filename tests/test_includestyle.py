@@ -92,13 +92,15 @@ class IncludeStyleTests(unittest.TestCase):
         self.assertEqual(p.negative_prompt, "後ろネガ")
         self.assertEqual(self.shared.prompt_styles.styles["日本語"].negative_prompt, "後ろネガ")
 
-    def test_missing_include_warns_and_becomes_empty(self):
+    def test_missing_include_reports_error_and_stops_generation(self):
         p = self.prompt("left #include<存在しない> right")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, "left  right")
+            with self.assertRaisesRegex(RuntimeError, "生成を中止"):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, "left #include<存在しない> right")
         self.assertIn("存在しない", output.getvalue())
+        self.assertIn("Error", output.getvalue())
 
     def test_inc_alias_markers_nested_styles_and_adetailer(self):
         self.shared.prompt_styles.styles.update({
@@ -130,16 +132,20 @@ class IncludeStyleTests(unittest.TestCase):
         self.assertEqual(p.prompt, "pink")
         self.assertEqual(p.negative_prompt, " keep ")
 
-    def test_inc_alias_missing_references_and_unknown_command_names(self):
+    def test_inc_alias_missing_references_error_and_unknown_command_names(self):
         for marker in ("#", "$", "%"):
             with self.subTest(marker=marker):
-                p = self.prompt(f"{marker}inc<存在しない> {marker}INC<base> {marker}increment<base>")
+                p = self.prompt(f"{marker}inc<存在しない>")
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    self.script.before_process(p)
-                self.assertEqual(p.prompt, f" {marker}INC<base> {marker}increment<base>")
+                    with self.assertRaisesRegex(RuntimeError, "生成を中止"):
+                        self.script.before_process(p)
                 self.assertIn("存在しない", output.getvalue())
-                self.script.postprocess(p)
+
+                unknown = self.prompt(f"{marker}INC<base> {marker}increment<base>")
+                self.script.before_process(unknown)
+                self.assertEqual(unknown.prompt, f"{marker}INC<base> {marker}increment<base>")
+                self.script.postprocess(unknown)
 
     def test_include_trims_edges_and_preserves_internal_and_surrounding_whitespace(self):
         self.shared.prompt_styles.styles["spacing"] = PromptStyle(
@@ -227,7 +233,7 @@ class IncludeStyleTests(unittest.TestCase):
         self.assertEqual(extra["ADetailer prompt 2"], "before 基本")
         self.assertEqual(extra["ADetailer negative prompt"], "基本ネガ")
 
-    def test_self_and_mutual_cycles_warn_and_remove_only_cyclic_reference(self):
+    def test_self_and_mutual_cycles_report_error_and_stop_generation(self):
         self.shared.prompt_styles.styles.update({
             "self": PromptStyle("self", "before #include<self> after", ""),
             "left": PromptStyle("left", "L #include<right> R", ""),
@@ -236,11 +242,10 @@ class IncludeStyleTests(unittest.TestCase):
         p = self.prompt("#include<self>")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertNotIn("#include", p.prompt)
-        self.assertIn("Warning", output.getvalue())
-        self.assertLess(len(p.prompt), 100)
-        self.assertTrue(p.prompt.startswith("before "))
+            with self.assertRaisesRegex(RuntimeError, "循環参照"):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, "#include<self>")
+        self.assertIn("Error", output.getvalue())
 
     def test_failed_expansion_preserves_shared_styles_and_prompts(self):
         original = self.shared.prompt_styles.styles.copy()

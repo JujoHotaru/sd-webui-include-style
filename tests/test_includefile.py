@@ -82,29 +82,42 @@ class IncludeFileTests(unittest.TestCase):
                                  ['基本ネガ / 基本ネガ'])
                 self.script.postprocess(p)
 
-    def test_file_alias_rules_and_mixed_name_cycle(self):
+    def test_file_alias_rules_and_mixed_name_cycle_stops_generation(self):
         self.write_prompt('rules.txt', '#delete<remove>#replace<red|pink>red remove')
         self.write_prompt('cycle.txt', '#includefile<cycle> kept')
         p = self.prompt('#file<rules>', '%file<cycle>')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, 'pink ')
-        self.assertEqual(p.negative_prompt, 'kept')
-        self.assertIn('Circular include', output.getvalue())
+            with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, '#file<rules>')
+        self.assertEqual(p.negative_prompt, '%file<cycle>')
+        self.assertIn('Error', output.getvalue())
 
-    def test_file_alias_invalid_missing_and_unknown_command_names(self):
+    def test_file_alias_invalid_paths_and_unknown_command_names(self):
         for marker in ('#', '$', '%'):
             with self.subTest(marker=marker):
-                p = self.prompt(f'{marker}file<missing> {marker}file<../outside> '
+                missing = self.prompt(f'{marker}file<missing>')
+                missing_output = io.StringIO()
+                with contextlib.redirect_stdout(missing_output):
+                    with self.assertRaisesRegex(RuntimeError, '見つかりません'):
+                        self.script.before_process(missing)
+                self.assertIn('Error', missing_output.getvalue())
+
+                p = self.prompt(f'{marker}file<../outside> '
                                 f'{marker}FILE<base> {marker}filename<base>')
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    self.script.before_process(p)
-                self.assertEqual(p.prompt, f'  {marker}FILE<base> {marker}filename<base>')
-                self.assertIn('Cannot read prompt file', output.getvalue())
-                self.assertIn('Invalid prompt file path', output.getvalue())
-                self.script.postprocess(p)
+                    with self.assertRaisesRegex(RuntimeError, 'パスが無効'):
+                        self.script.before_process(p)
+                self.assertEqual(p.prompt, f'{marker}file<../outside> '
+                                  f'{marker}FILE<base> {marker}filename<base>')
+                self.assertIn('Error', output.getvalue())
+
+                unknown = self.prompt(f'{marker}FILE<base> {marker}filename<base>')
+                self.script.before_process(unknown)
+                self.assertEqual(unknown.prompt, f'{marker}FILE<base> {marker}filename<base>')
+                self.script.postprocess(unknown)
 
     def test_nested_references_and_whitespace_only_files_are_trimmed(self):
         self.write_prompt('empty.txt', ' \t\r\n\u3000')
@@ -139,17 +152,17 @@ class IncludeFileTests(unittest.TestCase):
         self.script.before_process(p)
         self.assertEqual(p.prompt, 'p\x00l\x00a\x00i\x00n\x00')
 
-    def test_incomplete_bom_utf16_warns_and_expands_empty(self):
+    def test_incomplete_bom_utf16_reports_error_and_stops_generation(self):
         for bom in (b'\xff\xfe', b'\xfe\xff'):
             with self.subTest(bom=bom):
                 self.write_prompt('incomplete.txt', bom + b'\x61')
                 p = self.prompt('before #includefile<incomplete> after')
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    self.script.before_process(p)
-                self.assertEqual(p.prompt, 'before  after')
-                self.assertIn('Warning', output.getvalue())
-                self.script.postprocess(p)
+                    with self.assertRaisesRegex(RuntimeError, '読み込めません'):
+                        self.script.before_process(p)
+                self.assertEqual(p.prompt, 'before #includefile<incomplete> after')
+                self.assertIn('Error', output.getvalue())
 
     def test_file_internal_style_include_uses_current_prompt_field(self):
         self.write_prompt('fields.txt', 'P=#include<base>')
@@ -158,7 +171,7 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(p.prompt, 'P=基本')
         self.assertEqual(p.negative_prompt, 'P=基本ネガ')
 
-    def test_nested_file_and_style_references_and_mixed_cycle(self):
+    def test_nested_file_and_style_references_and_mixed_cycle_stops_generation(self):
         self.write_prompt('outer.txt', 'A #includefile<inner> Z')
         self.write_prompt('inner.txt', '#include<bridge>')
         self.write_prompt('back.txt', 'D #include<bridge> E')
@@ -168,9 +181,10 @@ class IncludeFileTests(unittest.TestCase):
         p = self.prompt('#includefile<outer>')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, 'A B D  E C Z')
-        self.assertIn('Circular include', output.getvalue())
+            with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, '#includefile<outer>')
+        self.assertIn('Error', output.getvalue())
 
     def test_file_directives_are_applied_after_expansion_to_prompt_and_styles(self):
         self.write_prompt('rules.txt', '#delete<remove> #replace<black|white>')
@@ -203,16 +217,23 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(extra['ADetailer prompt 2'], ['x 基本', '基本'])
         self.assertEqual(extra['ADetailer negative prompt 3'], ['基本ネガ'])
 
-    def test_missing_invalid_encoding_and_unsafe_paths_warn_and_expand_empty(self):
+    def test_invalid_encoding_and_unsafe_paths_report_errors(self):
         self.write_prompt('bad.txt', b'\xff')
-        p = self.prompt('a #includefile<missing> b #includefile<bad> c '
-                        '#includefile<../outside> d #includefile<C:\\outside> e '
-                        '#includefile<\\\\server\\share> f #includefile<name:stream> g')
+        invalid_encoding = self.prompt('before #includefile<bad> after')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, 'a  b  c  d  e  f  g')
-        self.assertGreaterEqual(output.getvalue().count('Warning'), 6)
+            with self.assertRaisesRegex(RuntimeError, '生成を中止'):
+                self.script.before_process(invalid_encoding)
+        self.assertEqual(invalid_encoding.prompt, 'before #includefile<bad> after')
+        self.assertIn('Error', output.getvalue())
+
+        invalid_path = self.prompt('before #includefile<../outside> after')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            with self.assertRaisesRegex(RuntimeError, 'パスが無効'):
+                self.script.before_process(invalid_path)
+        self.assertEqual(invalid_path.prompt, 'before #includefile<../outside> after')
+        self.assertIn('Error', output.getvalue())
 
     def test_external_file_symbolic_link_is_read_in_both_prompt_fields(self):
         outside_dir = tempfile.TemporaryDirectory()
@@ -261,9 +282,10 @@ class IncludeFileTests(unittest.TestCase):
             p = self.prompt('#includefile<entry>')
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                self.script.before_process(p)
-            self.assertEqual(p.prompt, 'before  after')
-            self.assertIn('Circular include', output.getvalue())
+                with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                    self.script.before_process(p)
+            self.assertEqual(p.prompt, '#includefile<entry>')
+            self.assertIn('Error', output.getvalue())
             self.assertNotIn('depth limit', output.getvalue())
         finally:
             depth_patch.stop()
@@ -294,7 +316,7 @@ class IncludeFileTests(unittest.TestCase):
         self.assertEqual(p.prompt, 'sharedshared')
         self.assertEqual(len(reads), 1)
 
-    def test_broken_symbolic_link_warns_and_expands_empty(self):
+    def test_broken_symbolic_link_reports_error_and_stops_generation(self):
         outside_dir = tempfile.TemporaryDirectory()
         self.addCleanup(outside_dir.cleanup)
         missing = Path(outside_dir.name) / 'missing.txt'
@@ -306,20 +328,22 @@ class IncludeFileTests(unittest.TestCase):
         p = self.prompt('before #includefile<broken> after')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, 'before  after')
-        self.assertIn('Warning', output.getvalue())
+            with self.assertRaisesRegex(RuntimeError, '生成を中止'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, 'before #includefile<broken> after')
+        self.assertIn('Error', output.getvalue())
 
-    def test_self_and_mutual_file_cycles_only_remove_cyclic_reference(self):
+    def test_self_and_mutual_file_cycles_report_error_and_stop_generation(self):
         self.write_prompt('self.txt', 'S #includefile<self> E')
         self.write_prompt('left.txt', 'L #includefile<right> R')
         self.write_prompt('right.txt', 'Q #includefile<left> Z')
         p = self.prompt('#includefile<self>|#includefile<left>')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, 'S  E|L Q  Z R')
-        self.assertGreaterEqual(output.getvalue().count('Circular include'), 2)
+            with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, '#includefile<self>|#includefile<left>')
+        self.assertIn('Error', output.getvalue())
 
     def test_file_expansion_uses_existing_depth_and_length_limits(self):
         self.write_prompt('one.txt', '#includefile<two>')
@@ -375,9 +399,10 @@ class IncludeFileTests(unittest.TestCase):
         p = self.prompt('#includefile<>#includefile<.>#includefile</absolute>#includefile<C:relative>'
                         '#includefile<NUL>#includefile<CON.txt>')
         with mock.patch.object(Path, 'open') as opened, contextlib.redirect_stdout(io.StringIO()):
-            self.script.before_process(p)
+            with self.assertRaisesRegex(RuntimeError, 'パスが無効'):
+                self.script.before_process(p)
         opened.assert_not_called()
-        self.assertEqual(p.prompt, '')
+        self.assertIn('#includefile<', p.prompt)
 
     def test_one_resolver_reads_a_file_once_for_both_prompt_fields(self):
         path = self.write_prompt('cached.txt', '#include<base>')

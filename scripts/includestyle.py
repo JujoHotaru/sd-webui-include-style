@@ -58,6 +58,10 @@ class _Expansion:
         self.end_negative = end_negative
 
 
+class _DeferredIncludeError(RuntimeError):
+    pass
+
+
 def _combine_prompt_pair(values, expanded):
     outputs = []
     for side in (0, 1):
@@ -248,18 +252,33 @@ def _on_infotext_pasted(_infotext, params):
 
 
 class _IncludeResolver:
-    def __init__(self, source):
+    def __init__(self, source, processing=None):
         self.source = source
+        self.processing = processing
         self.cache = {}
         self.active = set()
         self.warned = set()
         self.file_texts = {}
+        self.defer_errors = False
 
     def _warning(self, key, reason, kind='Style'):
         warning = (kind, key, reason)
         if warning not in self.warned:
             print(f'[IncludeStyle] Warning: {kind} "{key}": {reason}')
             self.warned.add(warning)
+
+    def _error(self, key, reason, kind='Style'):
+        message = f'IncludeStyle: {kind}「{key}」{reason}。生成を中止しました。'
+        if self.defer_errors:
+            raise _DeferredIncludeError(message)
+        print(f'[IncludeStyle] Error: {message}')
+        if self.processing is not None:
+            # ホストはスクリプトコールバック内の例外を捕捉して続行するため、後段でも失敗させる
+            def abort_generation(*args, **kwargs):
+                raise RuntimeError(message)
+
+            self.processing.init = abort_generation
+        raise RuntimeError(message)
 
     def style_content(self, key, negative, depth=0):
         return self._style_result(key, negative, depth).texts[negative]
@@ -268,16 +287,14 @@ class _IncludeResolver:
         empty = _Expansion(('', ''), negative)
         cache_key = ('style', key, negative)
         if cache_key in self.active:
-            self._warning(key, 'Circular include ignored.')
-            return empty
+            self._error(key, '循環参照が発生しました')
         if depth >= MAX_INCLUDE_DEPTH:
             self._warning(key, 'Include depth limit exceeded; reference ignored.')
             return empty
         if cache_key in self.cache:
             return self.cache[cache_key]
         if key not in self.source:
-            self._warning(key, 'not found!')
-            return empty
+            self._error(key, 'が見つかりません', 'スタイル')
 
         style = self.source[key]
         content = (style.negative_prompt if negative else style.prompt) or ''
@@ -310,13 +327,11 @@ class _IncludeResolver:
             # prompts 内のリンクから外部実体も読み、実体パスで循環とキャッシュを管理する
             path = path.resolve()
         except (OSError, ValueError, RuntimeError) as error:
-            self._warning(key, f'Invalid prompt file path: {error}', 'File')
-            return empty
+            self._error(key, f'のパスが無効です: {error}', 'プロンプトファイル')
 
         cache_key = ('file', path, negative)
         if any(('file', path, side) in self.active for side in (False, True)):
-            self._warning(key, 'Circular include ignored.', 'File')
-            return empty
+            self._error(key, '循環参照が発生しました', 'プロンプトファイル')
         if depth >= MAX_INCLUDE_DEPTH:
             self._warning(key, 'Include depth limit exceeded; reference ignored.', 'File')
             return empty
@@ -336,9 +351,10 @@ class _IncludeResolver:
             if len(self.file_texts[path]) > MAX_PROMPT_LENGTH:
                 raise ValueError('IncludeStyle prompt file length limit exceeded')
             content = self._expand_result(self.file_texts[path], negative, depth + 1, file_mode=True)
+        except FileNotFoundError:
+            self._error(key, 'が見つかりません', 'プロンプトファイル')
         except (OSError, UnicodeError) as error:
-            self._warning(key, f'Cannot read prompt file: {error}', 'File')
-            content = empty
+            self._error(key, f'を読み込めません: {error}', 'プロンプトファイル')
         except ValueError:
             self._warning(key, 'Expanded prompt length limit exceeded; reference ignored.', 'File')
             content = empty
@@ -510,7 +526,7 @@ class IncludeStyleScript(scripts.Script):
     def process(self, p, *args):
         state = getattr(p, _STATE_ATTRIBUTE, None)
         source = state.working if state is not None and state.active else shared.prompt_styles.styles
-        resolver = _IncludeResolver(source)
+        resolver = _IncludeResolver(source, p)
         if state is not None and state.active:
             resolver.file_texts = state.file_texts
             resolver.cache.update(state.style_results)
@@ -561,11 +577,18 @@ class IncludeStyleScript(scripts.Script):
             if _STYLE_STATES and _STYLE_STATES[-1].database is database:
                 # ADetailer の子処理に親の削除・置換済みスタイルを引き継がせない
                 source = _STYLE_STATES[-1].source
-            resolver = _IncludeResolver(source)
-            working = {
-                key: _new_style(style, *resolver.style_pair(key))
-                for key, style in source.items()
-            }
+            resolver = _IncludeResolver(source, p)
+            resolver.defer_errors = True
+            working = {}
+            for key, style in source.items():
+                try:
+                    prompt, negative_prompt = resolver.style_pair(key)
+                except _DeferredIncludeError:
+                    # 未使用スタイルの不備は保留し、実際に参照された時点でエラーにする
+                    resolver.cache.clear()
+                    prompt, negative_prompt = style.prompt or '', style.negative_prompt or ''
+                working[key] = _new_style(style, prompt, negative_prompt)
+            resolver.defer_errors = False
 
             used_styles = []
             for value in (p.prompt, p.negative_prompt):
@@ -573,6 +596,11 @@ class IncludeStyleScript(scripts.Script):
                     used_styles.extend(found[1].strip() for found in re.findall(RE_PAT_INCLUDE, text or ''))
             used_styles.extend(p.styles or [])
             used_styles = list(dict.fromkeys(used_styles))
+
+            # 選択スタイルはホストが後から適用するため、入力展開前に参照先を検証する
+            for key in dict.fromkeys(p.styles or []):
+                if key in source:
+                    resolver.style_pair(key)
 
             prompt, negative_prompt = resolver.expand_pair(p.prompt, p.negative_prompt)
             deletes, negative_deletes = [], []
@@ -605,9 +633,13 @@ class IncludeStyleScript(scripts.Script):
             copied_from = previous if previous is not None and previous.owner is not p else None
             originals = _OriginalPrompts(p, source, working, prompt, negative_prompt, previous)
             style_results = {}
+            resolver.defer_errors = True
             for key in source:
                 for negative in (False, True):
-                    result = resolver._style_result(key, negative)
+                    try:
+                        result = resolver._style_result(key, negative)
+                    except _DeferredIncludeError:
+                        continue
                     texts = []
                     for side, text in enumerate(result.texts):
                         if key in used_styles:
@@ -615,6 +647,7 @@ class IncludeStyleScript(scripts.Script):
                         texts.append(_apply_rules(text, negative_deletes if side else deletes,
                                                   negative_replacements if side else replacements))
                     style_results[('style', key, negative)] = _Expansion(texts, result.end_negative)
+            resolver.defer_errors = False
             state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from,
                                 originals, style_results)
             setattr(p, _STATE_ATTRIBUTE, state)

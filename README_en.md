@@ -149,7 +149,7 @@ Write the following in a prompt to insert the text with its surrounding whitespa
 
 You can specify a relative path containing a subfolder, such as `foo/bar`, and you can also use the Windows path separator `\`. All file references are resolved from `prompts`. Whitespace at the beginning and end of file contents is removed; spaces, tabs, and newlines within the contents are preserved. The BOM is not included in the prompt. Files without a BOM are read as UTF-8; UTF-16 is not guessed. File contents can also contain `#include` and `#includefile`. Nested `includefile` references are always resolved from the `prompts` folder. Style references in file contents use the style's `prompt` field when the current insertion target is positive, and its `negative_prompt` field when the target is negative.
 
-File names must be relative paths based on the `prompts` folder. If a file or subfolder inside `prompts` is a symbolic link, its target is read, even when the target is outside `prompts`. References in file contents continue to be resolved from `prompts`. Absolute paths, drive specifications, `..`, alternate data streams, and device names are not allowed. If a file is missing, cannot be read (for example, because a link is broken), or has an invalid path, a warning is issued and that reference is replaced with an empty string.
+File names must be relative paths based on the `prompts` folder. If a file or subfolder inside `prompts` is a symbolic link, its target is read, even when the target is outside `prompts`. References in file contents continue to be resolved from `prompts`. Absolute paths, drive specifications, `..`, alternate data streams, and device names are not allowed. If a file is missing, cannot be read (including an invalid encoding or broken link), or has an invalid path, an error message is displayed and generation is stopped.
 
 You can use `#includefile` in styles and ADetailer's additional prompt fields as well. You can also apply `delete` and `replace` to the inserted text. Changes to a file take effect on the next generation.
 
@@ -277,8 +277,8 @@ This feature works automatically and currently has no setting to turn it on or o
 ## Notes
 
 - To disable the extension, uncheck it in WebUI's extensions list, apply the change, and restart WebUI.
-- Including a nonexistent style prints a warning in the WebUI console and replaces that include with an empty string. The result is also an empty string if the corresponding field in the referenced style is empty.
-- If references form a cycle by repeatedly including the same styles or files, only the cyclic reference is removed and a warning is printed. References can be nested up to 100 levels, and the expanded prompt is limited to 1,000,000 characters. References that exceed the limits cannot be inserted; generation is stopped if the entire input prompt exceeds the character limit.
+- Referencing a nonexistent style or file, using an invalid file path, failing to read a file, or creating a cycle among style or file references displays an error message and stops generation. Error details are also printed in the WebUI console. An empty field in an existing style still expands to an empty string.
+- References can be nested up to 100 levels, and the expanded prompt is limited to 1,000,000 characters. References that exceed the limits cannot be inserted; generation is stopped if the entire input prompt exceeds the character limit.
 - A style can contain only `delete` or `replace` commands. Even if nothing remains after removing the commands, the command text in the style is not left in the prompt.
 
 ---

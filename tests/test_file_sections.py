@@ -114,16 +114,16 @@ class FileSectionTests(unittest.TestCase):
         self.assertEqual(p.prompt, '基本')
         self.assertEqual(p.negative_prompt, 'child 基本ネガ')
 
-    def test_missing_and_circular_nested_reference_do_not_change_destination(self):
+    def test_circular_nested_reference_reports_error_and_stops_generation(self):
         self.write_prompt('loop.txt', '##negative##\nN #file<loop> #file<missing> tail')
         p = self.prompt('#file<loop>', 'existing')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, '')
-        self.assertEqual(p.negative_prompt, 'existing, N   tail')
-        self.assertIn('Circular include', output.getvalue())
-        self.assertIn('Cannot read prompt file', output.getvalue())
+            with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, '#file<loop>')
+        self.assertEqual(p.negative_prompt, 'existing')
+        self.assertIn('Error', output.getvalue())
 
     def test_both_fields_and_multiple_calls_append_in_encounter_order(self):
         self.write_prompt('one.txt', '##positive##\nP1\n##negative##\nN1')
@@ -287,10 +287,11 @@ class FileSectionTests(unittest.TestCase):
         p = self.prompt('#file<target>')
         output = io.StringIO()
         with mock.patch.object(self.module, 'MAX_INCLUDE_DEPTH', 1), contextlib.redirect_stdout(output):
-            self.script.before_process(p)
-        self.assertEqual(p.prompt, '')
-        self.assertEqual(p.negative_prompt, 'N  tail')
-        self.assertIn('Circular include', output.getvalue())
+            with self.assertRaisesRegex(RuntimeError, '循環参照'):
+                self.script.before_process(p)
+        self.assertEqual(p.prompt, '#file<target>')
+        self.assertEqual(p.negative_prompt, '')
+        self.assertIn('Error', output.getvalue())
         self.assertNotIn('depth limit', output.getvalue())
 
     def test_metadata_only_activates_changed_image_after_scalar_receiver_broadcast(self):

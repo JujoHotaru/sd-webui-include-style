@@ -23,6 +23,8 @@ MAX_PROMPT_LENGTH = 1_000_000
 PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
 METADATA_KEY = 'Include-style'
 AUTO_INCLUDE_ON_PASTE = True
+_LOAD_TEMPLATE_PROMPTS = True
+_TEMPLATE_PROMPT_CHECKBOXES = {}
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -232,6 +234,8 @@ def _on_infotext_pasted(_infotext, params):
     if METADATA_KEY not in params:
         _auto_include_from_infotext(_infotext, params)
         return
+    if not _load_template_prompts_enabled():
+        return
     raw = params.get(METADATA_KEY)
     if not isinstance(raw, str):
         return
@@ -251,6 +255,20 @@ def _on_infotext_pasted(_infotext, params):
     params['Prompt'] = prompt
     params['Negative prompt'] = negative_prompt
     params['Styles array'] = list(selected)
+
+
+def _load_template_prompts_enabled():
+    return _LOAD_TEMPLATE_PROMPTS
+
+
+def _set_load_template_prompts(enabled):
+    global _LOAD_TEMPLATE_PROMPTS
+    _LOAD_TEMPLATE_PROMPTS = bool(enabled)
+    return _LOAD_TEMPLATE_PROMPTS
+
+
+def _reset_template_prompt_checkboxes():
+    _TEMPLATE_PROMPT_CHECKBOXES.clear()
 
 
 class _IncludeResolver:
@@ -534,6 +552,23 @@ class IncludeStyleScript(scripts.Script):
                 value=True, label='対象が見つからない場合はエラーとする',
                 elem_id=f'include_style_{tab}_error_on_missing',
             )
+            load_template_prompts = gr.Checkbox(
+                value=_load_template_prompts_enabled,
+                label='画像情報の読み込み時にテンプレートプロンプトを読み込む',
+                elem_id=f'include_style_{tab}_load_template_prompts',
+            )
+            # 共通の設定を個別の画面の既定値として保存しない
+            load_template_prompts.do_not_save_to_config = True
+            load_template_prompts.input(
+                fn=_set_load_template_prompts, inputs=[load_template_prompts], queue=False,
+            )
+            for other in _TEMPLATE_PROMPT_CHECKBOXES.values():
+                # input イベントだけを使い、相方の更新で再発火させない
+                for source, target in ((load_template_prompts, other), (other, load_template_prompts)):
+                    source.input(
+                        fn=_set_load_template_prompts, inputs=[source], outputs=[target], queue=False,
+                    )
+            _TEMPLATE_PROMPT_CHECKBOXES[tab] = load_template_prompts
         return (error_on_missing,)
 
     def _replace_common(self, prompt, negative):
@@ -685,3 +720,4 @@ class IncludeStyleScript(scripts.Script):
 
 
 script_callbacks.on_infotext_pasted(_on_infotext_pasted)
+script_callbacks.on_before_ui(_reset_template_prompt_checkboxes)

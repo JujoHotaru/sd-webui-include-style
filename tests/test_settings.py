@@ -23,6 +23,39 @@ class SettingsTests(unittest.TestCase):
         self.write_prompt = self.files.write_prompt
         self.error_on_missing = True
 
+    def test_template_loading_checkbox_defaults_and_syncs_in_both_directions(self):
+        for is_img2img in (False, True):
+            self.assertEqual(len(self.script.ui(is_img2img)), 1)
+        controls = self.module._TEMPLATE_PROMPT_CHECKBOXES
+        for tab, checkbox in controls.items():
+            self.assertIs(checkbox.value, True)
+            self.assertEqual(checkbox.label, '画像情報の読み込み時にテンプレートプロンプトを読み込む')
+            self.assertEqual(checkbox.elem_id, f'include_style_{tab}_load_template_prompts')
+            self.assertIs(checkbox.do_not_save_to_config, True)
+        for tab, enabled in (('txt2img', False), ('img2img', True)):
+            checkbox = controls[tab]
+            checkbox.value = enabled
+            for call in checkbox.input.call_args_list:
+                binding = call.kwargs
+                self.assertEqual(binding['inputs'], [checkbox])
+                self.assertIs(binding['queue'], False)
+                result = binding['fn'](enabled)
+                for target in binding.get('outputs', []):
+                    target.value = result
+            self.assertIs(self.module._load_template_prompts_enabled(), enabled)
+            self.assertTrue(all(control.value is enabled for control in controls.values()))
+
+    def test_ui_rebuild_discards_old_controls_and_keeps_current_setting(self):
+        self.script.ui(False)
+        self.module._set_load_template_prompts(False)
+        self.assertEqual(self.core.before_ui_callbacks, [self.module._reset_template_prompt_checkboxes])
+        self.core.before_ui_callbacks[0]()
+        self.assertEqual(self.module._TEMPLATE_PROMPT_CHECKBOXES, {})
+        self.script.ui(False)
+        checkbox = self.module._TEMPLATE_PROMPT_CHECKBOXES['txt2img']
+        self.assertIs(checkbox.value, False)
+        self.assertEqual(checkbox.input.call_count, 1)
+
     def allow_missing(self):
         self.error_on_missing = False
 

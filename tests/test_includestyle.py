@@ -55,10 +55,18 @@ class IncludeStyleTests(unittest.TestCase):
         host.styles = types.SimpleNamespace(PromptStyle=PromptStyle)
         host.scripts = scripts
         self.infotext_callbacks = []
-        host.script_callbacks = types.SimpleNamespace(on_infotext_pasted=self.infotext_callbacks.append)
+        self.before_ui_callbacks = []
+        host.script_callbacks = types.SimpleNamespace(
+            on_infotext_pasted=self.infotext_callbacks.append,
+            on_before_ui=self.before_ui_callbacks.append,
+        )
         gradio = types.ModuleType("gradio")
         gradio.Accordion = mock.MagicMock()
-        gradio.Checkbox = mock.Mock(side_effect=lambda **kwargs: types.SimpleNamespace(**kwargs))
+        def checkbox(**kwargs):
+            if callable(kwargs.get('value')):
+                kwargs['value'] = kwargs['value']()
+            return types.SimpleNamespace(**kwargs, input=mock.Mock())
+        gradio.Checkbox = mock.Mock(side_effect=checkbox)
         self.module_patch = mock.patch.dict(sys.modules, {"modules": host, "gradio": gradio})
         self.module_patch.start()
         spec = importlib.util.spec_from_file_location("includestyle_test_target", SOURCE)

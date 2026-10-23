@@ -135,6 +135,32 @@ class IncludeStyleMetadataTests(unittest.TestCase):
         self.assertEqual(parsed_params["Negative prompt"], "changed")
         self.assertEqual(parsed_params["Styles array"], [])
 
+    def test_template_loading_toggle_preserves_loaded_fields_and_can_be_reenabled(self):
+        payload = {'prompt': '#include<base>', 'negative prompt': 'raw negative', 'styles': []}
+        params = {
+            'Prompt': '基本, outdoors', 'Negative prompt': '基本ネガ, blurry',
+            'Styles array': ['loaded style'], 'Seed': '123', 'Steps': '20',
+            'Hires prompt': 'hires prompt', 'Hires negative prompt': 'hires negative',
+            self.module.METADATA_KEY: json.dumps(payload),
+        }
+        previous = copy.deepcopy(params)
+        self.module._set_load_template_prompts(False)
+        self.module._on_infotext_pasted('', params)
+        self.assertEqual(params, previous)
+        self.module._set_load_template_prompts(True)
+        self.module._on_infotext_pasted('', params)
+        self.assertEqual(params, {**previous, 'Prompt': payload['prompt'],
+                                 'Negative prompt': payload['negative prompt'], 'Styles array': []})
+
+    def test_disabled_template_loading_keeps_auto_include_without_metadata(self):
+        self.module._set_load_template_prompts(False)
+        params = {'Prompt': '基本, outdoors', 'Negative prompt': '基本ネガ, blurry',
+                  'Styles array': ['loaded style']}
+        self.module._on_infotext_pasted('', params)
+        self.assertEqual(params, {'Prompt': '#include<base>, outdoors',
+                                 'Negative prompt': '#include<base>, blurry',
+                                 'Styles array': ['loaded style']})
+
     def test_malformed_metadata_is_ignored_and_stale_metadata_is_removed(self):
         valid = {"prompt": "raw", "negative prompt": "raw negative", "styles": ["base"]}
         malformed_values = ["{", "[]", '{"text": 2}', "null", None, 123]

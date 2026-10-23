@@ -38,6 +38,8 @@ Open the “IncludeStyle” accordion in the txt2img or img2img generation scree
 
 This setting applies to positive and negative prompts, nested references in styles and files, and ADetailer references. The `inc` and `file` aliases behave the same way. Invalid file paths, file read or encoding errors, and reference cycles still stop generation when the checkbox is disabled.
 
+“画像情報の読み込み時にテンプレートプロンプトを読み込む” (Load template prompts when reading image information) restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded; restarting WebUI resets it to enabled. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. Automatic include conversion for images without restoration data is unaffected.
+
 ## Syntax
 
 The four syntax forms below are available. In each form, you can replace the leading `#` with `$` or `%`. Write command names in lowercase.
@@ -261,7 +263,7 @@ If a command was used in either field, both prompts and the style selection are 
 
 This works with PNG, JPEG, and WebP. Enable WebUI's image metadata saving setting.
 
-To restore in Forge Neo:
+Enable “画像情報の読み込み時にテンプレートプロンプトを読み込む” (Load template prompts when reading image information), then restore in Forge Neo as follows:
 
 1. Drop the image into the positive prompt field. The full generation parameters are loaded.
 2. Click the “Read generation parameters...” button.
@@ -281,7 +283,7 @@ Text inside existing `include`, `includefile`, `delete`, and `replace` commands 
 
 An ending style and includes in the middle of the prompt can be used together. Conversion preserves the loaded style selection and Hires prompt fields. If the entire prompt or ending does not get restored as a style because of the combination of positive/negative prompts or WebUI settings, it remains as text. Hires prompt fields are not converted.
 
-This feature works automatically and currently has no setting to turn it on or off. For images with this extension's restoration data, the saved original input is restored. Automatic conversion matches current style contents, so the matched style may differ from the one actually selected in the past.
+This feature works automatically and currently has no setting to turn it on or off. For images with this extension's restoration data, the template-prompt loading option above restores the saved original input when enabled and keeps WebUI's loaded contents when disabled. Automatic include conversion is skipped in either case. Automatic conversion matches current style contents, so the matched style may differ from the one actually selected in the past.
 
 ## Notes
 

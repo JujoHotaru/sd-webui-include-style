@@ -56,7 +56,10 @@ class IncludeStyleTests(unittest.TestCase):
         host.scripts = scripts
         self.infotext_callbacks = []
         host.script_callbacks = types.SimpleNamespace(on_infotext_pasted=self.infotext_callbacks.append)
-        self.module_patch = mock.patch.dict(sys.modules, {"modules": host})
+        gradio = types.ModuleType("gradio")
+        gradio.Accordion = mock.MagicMock()
+        gradio.Checkbox = mock.Mock(side_effect=lambda **kwargs: types.SimpleNamespace(**kwargs))
+        self.module_patch = mock.patch.dict(sys.modules, {"modules": host, "gradio": gradio})
         self.module_patch.start()
         spec = importlib.util.spec_from_file_location("includestyle_test_target", SOURCE)
         self.module = importlib.util.module_from_spec(spec)
@@ -75,10 +78,16 @@ class IncludeStyleTests(unittest.TestCase):
         self.processing_objects.append(p)
         return p
 
-    def test_script_registration_has_no_ui(self):
+    def test_script_registration_has_generation_panel_in_both_modes(self):
         self.assertEqual(self.script.title(), "IncludeStyle")
-        self.assertIs(self.script.show(False), self.module.scripts.AlwaysVisible)
-        self.assertEqual(self.script.ui(False), ())
+        for is_img2img, tab in ((False, "txt2img"), (True, "img2img")):
+            with self.subTest(tab=tab):
+                self.assertIs(self.script.show(is_img2img), self.module.scripts.AlwaysVisible)
+                (checkbox,) = self.script.ui(is_img2img)
+                self.module.gr.Accordion.assert_called_with("IncludeStyle", open=False)
+                self.assertIs(checkbox.value, True)
+                self.assertEqual(checkbox.label, "対象が見つからない場合はエラーとする")
+                self.assertEqual(checkbox.elem_id, f"include_style_{tab}_error_on_missing")
 
     def test_include_markers_whitespace_japanese_and_nested_forward_negative(self):
         self.shared.prompt_styles.styles.update({

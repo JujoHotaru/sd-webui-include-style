@@ -5,6 +5,8 @@ import threading
 from pathlib import Path, PureWindowsPath
 from types import MethodType
 
+import gradio as gr
+
 from modules import shared, styles, scripts, script_callbacks
 
 
@@ -252,9 +254,10 @@ def _on_infotext_pasted(_infotext, params):
 
 
 class _IncludeResolver:
-    def __init__(self, source, processing=None):
+    def __init__(self, source, processing=None, error_on_missing=True):
         self.source = source
         self.processing = processing
+        self.error_on_missing = error_on_missing
         self.cache = {}
         self.active = set()
         self.warned = set()
@@ -280,6 +283,12 @@ class _IncludeResolver:
             self.processing.init = abort_generation
         raise RuntimeError(message)
 
+    def _missing(self, key, kind):
+        # 未使用スタイルの参照エラーは保留し、使用されたときだけ警告する
+        if self.error_on_missing or self.defer_errors:
+            self._error(key, 'が見つかりません', kind)
+        self._warning(key, 'が見つかりません。参照を空文字として生成を続行します。', kind)
+
     def style_content(self, key, negative, depth=0):
         return self._style_result(key, negative, depth).texts[negative]
 
@@ -294,7 +303,8 @@ class _IncludeResolver:
         if cache_key in self.cache:
             return self.cache[cache_key]
         if key not in self.source:
-            self._error(key, 'が見つかりません', 'スタイル')
+            self._missing(key, 'スタイル')
+            return empty
 
         style = self.source[key]
         content = (style.negative_prompt if negative else style.prompt) or ''
@@ -352,7 +362,8 @@ class _IncludeResolver:
                 raise ValueError('IncludeStyle prompt file length limit exceeded')
             content = self._expand_result(self.file_texts[path], negative, depth + 1, file_mode=True)
         except FileNotFoundError:
-            self._error(key, 'が見つかりません', 'プロンプトファイル')
+            self._missing(key, 'プロンプトファイル')
+            content = empty
         except (OSError, UnicodeError) as error:
             self._error(key, f'を読み込めません: {error}', 'プロンプトファイル')
         except ValueError:
@@ -422,7 +433,7 @@ class _IncludeResolver:
 
 class _StyleState:
     def __init__(self, database, source, working, original_close, owner, file_texts, copied_from, originals,
-                 style_results):
+                 style_results, error_on_missing):
         self.database = database
         self.original = database.styles
         self.source = source
@@ -431,6 +442,7 @@ class _StyleState:
         self.owner = owner
         self.file_texts = file_texts
         self.style_results = style_results
+        self.error_on_missing = error_on_missing
         self.copied_from = copied_from
         self.originals = originals
         self.metadata_valid = True
@@ -509,7 +521,6 @@ def _new_style(style, prompt, negative_prompt):
 
 
 class IncludeStyleScript(scripts.Script):
-    # 現在のバージョンでは UI は持たない
     def title(self):
         return 'IncludeStyle'
 
@@ -517,16 +528,24 @@ class IncludeStyleScript(scripts.Script):
         return scripts.AlwaysVisible
 
     def ui(self, is_img2img):
-        return ()
+        tab = 'img2img' if is_img2img else 'txt2img'
+        with gr.Accordion('IncludeStyle', open=False):
+            error_on_missing = gr.Checkbox(
+                value=True, label='対象が見つからない場合はエラーとする',
+                elem_id=f'include_style_{tab}_error_on_missing',
+            )
+        return (error_on_missing,)
 
     def _replace_common(self, prompt, negative):
         resolver = _IncludeResolver(shared.prompt_styles.styles)
         return _map_prompts(prompt, lambda text: resolver.expand(text, negative))
 
-    def process(self, p, *args):
+    def process(self, p, error_on_missing=True, *args):
         state = getattr(p, _STATE_ATTRIBUTE, None)
         source = state.working if state is not None and state.active else shared.prompt_styles.styles
-        resolver = _IncludeResolver(source, p)
+        if state is not None and state.active:
+            error_on_missing = state.error_on_missing
+        resolver = _IncludeResolver(source, p, error_on_missing)
         if state is not None and state.active:
             resolver.file_texts = state.file_texts
             resolver.cache.update(state.style_results)
@@ -555,7 +574,7 @@ class IncludeStyleScript(scripts.Script):
     def postprocess_batch(self, p, images, **kwargs):
         _update_original_metadata(p)
 
-    def before_process(self, p, *args):
+    def before_process(self, p, error_on_missing=True, *args):
         previous = getattr(p, _STATE_ATTRIBUTE, None)
         if previous is not None and previous.owner is p:
             previous.metadata_valid = False
@@ -577,7 +596,7 @@ class IncludeStyleScript(scripts.Script):
             if _STYLE_STATES and _STYLE_STATES[-1].database is database:
                 # ADetailer の子処理に親の削除・置換済みスタイルを引き継がせない
                 source = _STYLE_STATES[-1].source
-            resolver = _IncludeResolver(source, p)
+            resolver = _IncludeResolver(source, p, error_on_missing)
             resolver.defer_errors = True
             working = {}
             for key, style in source.items():
@@ -597,10 +616,12 @@ class IncludeStyleScript(scripts.Script):
             used_styles.extend(p.styles or [])
             used_styles = list(dict.fromkeys(used_styles))
 
-            # 選択スタイルはホストが後から適用するため、入力展開前に参照先を検証する
-            for key in dict.fromkeys(p.styles or []):
+            # 警告で続行する場合は、事前展開で保留した参照も解決して作業用辞書へ反映する
+            check_styles = (p.styles or []) if resolver.error_on_missing else used_styles
+            for key in dict.fromkeys(check_styles):
                 if key in source:
-                    resolver.style_pair(key)
+                    positive, negative = resolver.style_pair(key)
+                    working[key] = _new_style(source[key], positive, negative)
 
             prompt, negative_prompt = resolver.expand_pair(p.prompt, p.negative_prompt)
             deletes, negative_deletes = [], []
@@ -649,7 +670,7 @@ class IncludeStyleScript(scripts.Script):
                     style_results[('style', key, negative)] = _Expansion(texts, result.end_negative)
             resolver.defer_errors = False
             state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from,
-                                originals, style_results)
+                                originals, style_results, error_on_missing)
             setattr(p, _STATE_ATTRIBUTE, state)
             if original_close is not None:
                 p.close = MethodType(_close_processing, p)

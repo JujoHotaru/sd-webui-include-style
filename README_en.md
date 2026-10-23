@@ -27,7 +27,16 @@ Open “Extensions” > “Install from URL” in WebUI and enter the following 
 https://github.com/JujoHotaru/sd-webui-include-style
 ```
 
-Restart WebUI after installation. The extension has no dedicated settings page or control panel. When enabled, it processes prompt syntax during generation.
+Restart WebUI after installation. When enabled, the extension processes prompt syntax during generation.
+
+## Settings
+
+Open the “IncludeStyle” accordion in the txt2img or img2img generation screen to change “対象が見つからない場合はエラーとする” (Stop with an error if the target is not found). This checkbox is enabled by default. Each generation uses the checkbox value from its own screen. Change the checkbox and generate as usual.
+
+- Enabled: generation stops with an error if a referenced style or file cannot be found.
+- Disabled: a warning is printed in the console, the missing reference is replaced with an empty string, and generation continues. The remaining text and valid references are processed as usual.
+
+This setting applies to positive and negative prompts, nested references in styles and files, and ADetailer references. The `inc` and `file` aliases behave the same way. Invalid file paths, file read or encoding errors, and reference cycles still stop generation when the checkbox is disabled.
 
 ## Syntax
 
@@ -277,7 +286,7 @@ This feature works automatically and currently has no setting to turn it on or o
 ## Notes
 
 - To disable the extension, uncheck it in WebUI's extensions list, apply the change, and restart WebUI.
-- Referencing a nonexistent style or file, using an invalid file path, failing to read a file, or creating a cycle among style or file references displays an error message and stops generation. Error details are also printed in the WebUI console. An empty field in an existing style still expands to an empty string.
+- Referencing a nonexistent style or file either stops generation or prints a warning and replaces the reference with an empty string, depending on the setting above. Invalid file paths, file read errors, and reference cycles always stop generation. Error details are also printed in the WebUI console. An empty field in an existing style still expands to an empty string.
 - References can be nested up to 100 levels, and the expanded prompt is limited to 1,000,000 characters. References that exceed the limits cannot be inserted; generation is stopped if the entire input prompt exceeds the character limit.
 - A style can contain only `delete` or `replace` commands. Even if nothing remains after removing the commands, the command text in the style is not left in the prompt.
 

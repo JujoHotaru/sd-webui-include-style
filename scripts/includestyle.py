@@ -23,7 +23,7 @@ MAX_PROMPT_LENGTH = 1_000_000
 PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
 METADATA_KEY = 'Include-style'
 AUTO_INCLUDE_ON_PASTE = True
-_LOAD_TEMPLATE_PROMPTS = True
+_UI_SETTINGS_LOCK = threading.Lock()
 _TEMPLATE_PROMPT_CHECKBOXES = {}
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
@@ -257,14 +257,26 @@ def _on_infotext_pasted(_infotext, params):
     params['Styles array'] = list(selected)
 
 
+def _register_ui_settings():
+    for key in ('include_style_txt2img_error_on_missing',
+                'include_style_img2img_error_on_missing',
+                'include_style_load_template_prompts'):
+        shared.opts.add_option(key, shared.OptionInfo(True, section=(None, 'IncludeStyle')))
+
+
+def _save_ui_setting(key, enabled):
+    with _UI_SETTINGS_LOCK:
+        if shared.opts.set(key, bool(enabled)):
+            shared.opts.save(shared.config_filename)
+        return getattr(shared.opts, key)
+
+
 def _load_template_prompts_enabled():
-    return _LOAD_TEMPLATE_PROMPTS
+    return getattr(shared.opts, 'include_style_load_template_prompts', True)
 
 
 def _set_load_template_prompts(enabled):
-    global _LOAD_TEMPLATE_PROMPTS
-    _LOAD_TEMPLATE_PROMPTS = bool(enabled)
-    return _LOAD_TEMPLATE_PROMPTS
+    return _save_ui_setting('include_style_load_template_prompts', enabled)
 
 
 def _reset_template_prompt_checkboxes():
@@ -547,17 +559,24 @@ class IncludeStyleScript(scripts.Script):
 
     def ui(self, is_img2img):
         tab = 'img2img' if is_img2img else 'txt2img'
+        error_setting = f'include_style_{tab}_error_on_missing'
         with gr.Accordion('IncludeStyle', open=False):
             error_on_missing = gr.Checkbox(
-                value=True, label='対象が見つからない場合はエラーとする',
+                value=lambda: getattr(shared.opts, error_setting, True),
+                label='Stop with an error if the target is not found during generation',
                 elem_id=f'include_style_{tab}_error_on_missing',
+            )
+            error_on_missing.do_not_save_to_config = True
+            error_on_missing.input(
+                fn=lambda enabled: _save_ui_setting(error_setting, enabled),
+                inputs=[error_on_missing], queue=False,
             )
             load_template_prompts = gr.Checkbox(
                 value=_load_template_prompts_enabled,
-                label='画像情報の読み込み時にテンプレートプロンプトを読み込む',
+                label='Load template prompts when reading image information',
                 elem_id=f'include_style_{tab}_load_template_prompts',
             )
-            # 共通の設定を個別の画面の既定値として保存しない
+            # チェック状態はshared.optsで保存し、UIの既定値による上書きを防ぐ
             load_template_prompts.do_not_save_to_config = True
             load_template_prompts.input(
                 fn=_set_load_template_prompts, inputs=[load_template_prompts], queue=False,
@@ -721,3 +740,4 @@ class IncludeStyleScript(scripts.Script):
 
 script_callbacks.on_infotext_pasted(_on_infotext_pasted)
 script_callbacks.on_before_ui(_reset_template_prompt_checkboxes)
+script_callbacks.on_ui_settings(_register_ui_settings)

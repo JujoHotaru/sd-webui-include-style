@@ -7,13 +7,14 @@
 | ファイル | 役割 |
 | --- | --- |
 | `scripts/includestyle.py` | WebUI が読み込むエントリポイント。構文の定義、スタイル展開、削除・置換、ADetailer 用処理、復元を実装 |
+| `localizations/ja_JP.json` | WebUI標準の翻訳機構で使う、英語のUI文言から日本語への翻訳辞書 |
 | `prompts/` | `#includefile` から参照する拡張機能内のテキストファイル置き場。UTF-8（BOM可）またはBOM付きUTF-16LE／UTF-16BEテキスト |
 | `tests/test_includestyle.py` | ホスト API をスタブ化して処理を確認する GPU 不要の回帰テスト |
 | `tests/test_includefile.py` | ファイル展開、パス検証、文字コード、循環、キャッシュ、スタイル・ADetailer連携を確認する GPU 不要の回帰テスト |
 | `tests/test_file_sections.py` | 挿入位置命令、正負への振り分け、子から親への挿入先の引き継ぎと連携・復元の回帰テスト |
 | `tests/test_limits_and_state.py` | 展開上限、入れ子、コピー、異常終了、スレッド間の復元と排他処理の回帰テスト |
 | `tests/test_metadata.py` | 欄ごとの原本記録、バッチ・グリッド、生成情報の復元、コピーの分離の回帰テスト |
-| `tests/test_settings.py` | 設定登録、参照先欠落時の停止・警告、入れ子・ADetailer・復元の回帰テスト |
+| `tests/test_settings.py` | 設定登録・自動保存と再読込、参照先欠落時の停止・警告、入れ子・ADetailer・復元の回帰テスト |
 | `tests/test_auto_include.py` | 専用メタデータがない生成情報のinclude自動変換、ホストのスタイル抽出との整合性、内部スイッチの回帰テスト |
 | `README.md` | 日本語の利用手順、構文、使用例、連携設定と制約 |
 | `README_en.md` | README.mdに対応する英語の利用手順、構文、使用例、連携設定と制約 |
@@ -29,7 +30,13 @@ README.mdとREADME_en.mdは内部構造を知らない利用者向けに、操�
 
 ## 実装の流れ
 
-`IncludeStyleScript` は `AlwaysVisible` のスクリプトとして登録されます。`ui`でtxt2img・img2imgの生成画面に`gr.Accordion("IncludeStyle", open=False)`を追加し、既定値`True`の`gr.Checkbox`を返します。ホストはその値を`before_process`と`process`の`error_on_missing`引数へ渡します。引数省略時も`True`とし、`_StyleState.error_on_missing`に生成ごとの値を保持して、`process`では同じ状態の値を使います。Settingsページや`shared.opts`への設定登録は行いません。旧実装の`include_style_error_on_missing`がホストの設定ファイルに残っていても参照しません。`before_process` は他のスクリプトの `process` より先に実行する目的で使われ、次の処理を行います。
+UIのラベルは英語を既定とし、`localizations/ja_JP.json`に日本語訳を定義します。ホストは同名の翻訳辞書を統合し、選択中のLocalizationに対応する辞書をブラウザーへ渡します。英語のラベルを変更した場合は、日本語辞書のキーとREADME_en.mdのUI表記も揃えてください。`IncludeStyle`のタイトル、`elem_id`、生成引数は翻訳しません。
+
+`IncludeStyleScript` は `AlwaysVisible` のスクリプトとして登録されます。`ui`でtxt2img・img2imgの生成画面に`gr.Accordion("IncludeStyle", open=False)`を追加し、既定値`True`の`gr.Checkbox`を返します。ホストはその値を`before_process`と`process`の`error_on_missing`引数へ渡します。引数省略時も`True`とし、`_StyleState.error_on_missing`に生成ごとの値を保持して、`process`では同じ状態の値を使います。
+
+`on_ui_settings`で`shared.opts`に非表示の設定を登録します。`include_style_txt2img_error_on_missing`・`include_style_img2img_error_on_missing`は画面別、`include_style_load_template_prompts`は両画面共通で、すべて既定値は`True`です。Settingsページに項目は追加しません。チェックの`input`イベントで`opts.set`後に`opts.save(shared.config_filename)`を呼び、変更時に自動保存します。拡張機能内の保存は専用ロックで直列化します。両チェックを`do_not_save_to_config`でUI既定値保存から除外し、値を返すcallableで再読み込み時も保存済みの状態を表示します。旧実装の`include_style_error_on_missing`がホストの設定ファイルに残っていても参照しません。
+
+`before_process` は他のスクリプトの `process` より先に実行する目的で使われ、次の処理を行います。
 
 1. 再入可能ロックを取得し、スタイル辞書をローカルな作業用辞書として構築します。ADetailer の入れ子処理では、最上位処理の元辞書を参照元にします。
 2. 深さ優先で全スタイルの通常・Negative欄を解決し、ファイルからの反対側への追記をそのスタイルの対応する欄に統合します。事前展開だけで入力プロンプトへ追記しないでください。循環参照、無効なファイルパス、ファイルの読み込み失敗は、入力または選択スタイルから参照された時点でエラーにして生成を中止します。未登録スタイルとファイル不存在は、既定では同様に停止し、`error_on_missing=False`の場合はコンソール警告付きで空文字にします。未使用スタイルの参照エラーは保留し、そのスタイルの元の内容を作業用辞書に残します。
@@ -61,7 +68,7 @@ ADetailerの適用対象指定は、画面のタイトル`IncludeStyle`ではな
 
 改行・引用符・前後空白・空文字を保持します。空の指示や一致対象がないdelete・replaceも、コマンド構文の除去が発動するため記録対象です。ADetailerの生成情報だけの展開は、メインプロンプトの保存を発動させません。
 
-`ui`の「画像情報の読み込み時にテンプレートプロンプトを読み込む」は`_LOAD_TEMPLATE_PROMPTS`（既定値`True`）を切り替えます。生成引数には追加せず、Gradioの`input`イベントで即時反映し、txt2img・img2imgのチェックボックスを相互更新します。プログラムからの更新では`input`が発火しないため、連動がループしません。値はWebUIプロセス内で共通とし永続化しません。`do_not_save_to_config`で画面別の既定値保存を除外し、値を返すcallableでブラウザー再読み込み時にも現在値を表示します。`on_before_ui`でコンポーネントの登録を消去し、UI再構築時に古い参照を残しません。
+`ui`の「画像情報の読み込み時にテンプレートプロンプトを読み込む」は`include_style_load_template_prompts`（既定値`True`）を切り替えます。生成引数には追加せず、Gradioの`input`イベントで即時反映し、txt2img・img2imgのチェックボックスを相互更新します。プログラムからの更新では`input`が発火しないため、連動がループしません。値は両画面で共通とし、WebUIの再起動後も保存済みの状態を復元します。`on_before_ui`でコンポーネントの登録を消去し、UI再構築時に古い参照を残しません。
 
 `on_infotext_pasted`は専用キーがあり、このオプションがオフの場合は`params`を変更せず終了します。専用キーがない場合の自動include変換は、このオプションとは独立しています。オンの場合は専用キーを解析し、3項目が揃っていて型が正しい場合に両欄の入力と`Styles array`をまとめて復元します。空の`styles`は選択解除として反映します。他の生成設定は変更しません。Forge Neoで画像をプロンプト欄へドロップした後に「Read generation parameters...」を押す操作も、このコールバックを通ります。直接ドロップ用の追加フックはありません。
 

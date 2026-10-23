@@ -3,7 +3,9 @@
 import contextlib
 import importlib.util
 import io
+import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -27,6 +29,31 @@ class PromptStyles:
         self.styles = styles
 
 
+class HostOptions:
+    def __init__(self, data=None):
+        self.data = dict(data or {})
+        self.data_labels = {}
+        self.save = mock.Mock(side_effect=self._save)
+
+    def __getattr__(self, key):
+        if key in self.data:
+            return self.data[key]
+        raise AttributeError(key)
+
+    def add_option(self, key, info):
+        self.data_labels[key] = info
+        self.data.setdefault(key, info.default)
+
+    def set(self, key, value):
+        if self.data.get(key) == value:
+            return False
+        self.data[key] = value
+        return True
+
+    def _save(self, filename):
+        Path(filename).write_text(json.dumps(self.data), encoding='utf-8')
+
+
 class HostScript:
     pass
 
@@ -48,7 +75,14 @@ class IncludeStyleTests(unittest.TestCase):
         self.styles = {
             "base": PromptStyle("base", "基本", "基本ネガ"),
         }
-        shared = types.SimpleNamespace(prompt_styles=PromptStyles(self.styles))
+        settings_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(settings_dir.cleanup)
+        self.settings_dir = settings_dir
+        shared = types.SimpleNamespace(
+            prompt_styles=PromptStyles(self.styles), opts=HostOptions(),
+            config_filename=str(Path(settings_dir.name) / 'config.json'),
+            OptionInfo=lambda default, **kwargs: types.SimpleNamespace(default=default, **kwargs),
+        )
         scripts = types.SimpleNamespace(Script=HostScript, AlwaysVisible=object())
         host = types.ModuleType("modules")
         host.shared = shared
@@ -56,9 +90,11 @@ class IncludeStyleTests(unittest.TestCase):
         host.scripts = scripts
         self.infotext_callbacks = []
         self.before_ui_callbacks = []
+        self.ui_settings_callbacks = []
         host.script_callbacks = types.SimpleNamespace(
             on_infotext_pasted=self.infotext_callbacks.append,
             on_before_ui=self.before_ui_callbacks.append,
+            on_ui_settings=self.ui_settings_callbacks.append,
         )
         gradio = types.ModuleType("gradio")
         gradio.Accordion = mock.MagicMock()
@@ -72,6 +108,8 @@ class IncludeStyleTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("includestyle_test_target", SOURCE)
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)
+        for callback in self.ui_settings_callbacks:
+            callback()
         self.shared = shared
         self.script = self.module.IncludeStyleScript()
 
@@ -79,6 +117,7 @@ class IncludeStyleTests(unittest.TestCase):
         for p in reversed(getattr(self, "processing_objects", [])):
             self.script.postprocess(p)
         self.module_patch.stop()
+        self.settings_dir.cleanup()
 
     def prompt(self, positive="", negative="", selected=None, extra=None):
         p = HostProcessing(positive, negative, list(selected or []), extra or {})
@@ -94,7 +133,7 @@ class IncludeStyleTests(unittest.TestCase):
                 (checkbox,) = self.script.ui(is_img2img)
                 self.module.gr.Accordion.assert_called_with("IncludeStyle", open=False)
                 self.assertIs(checkbox.value, True)
-                self.assertEqual(checkbox.label, "対象が見つからない場合はエラーとする")
+                self.assertEqual(checkbox.label, "Stop with an error if the target is not found during generation")
                 self.assertEqual(checkbox.elem_id, f"include_style_{tab}_error_on_missing")
 
     def test_include_markers_whitespace_japanese_and_nested_forward_negative(self):

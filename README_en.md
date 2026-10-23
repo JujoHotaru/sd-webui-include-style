@@ -31,14 +31,16 @@ Restart WebUI after installation. When enabled, the extension processes prompt s
 
 ## Settings
 
-Open the “IncludeStyle” accordion in the txt2img or img2img generation screen to change “対象が見つからない場合はエラーとする” (Stop with an error if the target is not found). This checkbox is enabled by default. Each generation uses the checkbox value from its own screen. Change the checkbox and generate as usual.
+The UI uses English by default. For Japanese, search for “Localization” in WebUI's “Settings”, select `ja_JP`, click “Apply settings”, and then click “Reload UI”. The labels below are for the English UI.
+
+Open the “IncludeStyle” accordion in the txt2img or img2img generation screen to change “Stop with an error if the target is not found during generation”. This checkbox is enabled by default. Each generation uses the checkbox value from its own screen. Changes are saved automatically and restored separately for each screen after restarting WebUI. Generate as usual.
 
 - Enabled: generation stops with an error if a referenced style or file cannot be found.
 - Disabled: a warning is printed in the console, the missing reference is replaced with an empty string, and generation continues. The remaining text and valid references are processed as usual.
 
 This setting applies to positive and negative prompts, nested references in styles and files, and ADetailer references. The `inc` and `file` aliases behave the same way. Invalid file paths, file read or encoding errors, and reference cycles still stop generation when the checkbox is disabled.
 
-“画像情報の読み込み時にテンプレートプロンプトを読み込む” (Load template prompts when reading image information) restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded; restarting WebUI resets it to enabled. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. Automatic include conversion for images without restoration data is unaffected.
+“Load template prompts when reading image information” restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded and are saved automatically. Both screens restore the last checkbox state after restarting WebUI. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. Automatic include conversion for images without restoration data is unaffected.
 
 ## Syntax
 
@@ -263,7 +265,7 @@ If a command was used in either field, both prompts and the style selection are 
 
 This works with PNG, JPEG, and WebP. Enable WebUI's image metadata saving setting.
 
-Enable “画像情報の読み込み時にテンプレートプロンプトを読み込む” (Load template prompts when reading image information), then restore in Forge Neo as follows:
+Enable “Load template prompts when reading image information”, then restore in Forge Neo as follows:
 
 1. Drop the image into the positive prompt field. The full generation parameters are loaded.
 2. Click the “Read generation parameters...” button.

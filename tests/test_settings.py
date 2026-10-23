@@ -3,7 +3,9 @@
 import contextlib
 import copy
 import io
+import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import test_includefile as files
@@ -29,7 +31,7 @@ class SettingsTests(unittest.TestCase):
         controls = self.module._TEMPLATE_PROMPT_CHECKBOXES
         for tab, checkbox in controls.items():
             self.assertIs(checkbox.value, True)
-            self.assertEqual(checkbox.label, '画像情報の読み込み時にテンプレートプロンプトを読み込む')
+            self.assertEqual(checkbox.label, 'Load template prompts when reading image information')
             self.assertEqual(checkbox.elem_id, f'include_style_{tab}_load_template_prompts')
             self.assertIs(checkbox.do_not_save_to_config, True)
         for tab, enabled in (('txt2img', False), ('img2img', True)):
@@ -55,6 +57,61 @@ class SettingsTests(unittest.TestCase):
         checkbox = self.module._TEMPLATE_PROMPT_CHECKBOXES['txt2img']
         self.assertIs(checkbox.value, False)
         self.assertEqual(checkbox.input.call_count, 1)
+
+    def test_persistent_settings_are_hidden_and_default_to_enabled(self):
+        self.assertEqual(self.core.ui_settings_callbacks, [self.module._register_ui_settings])
+        expected = {
+            'include_style_txt2img_error_on_missing',
+            'include_style_img2img_error_on_missing',
+            'include_style_load_template_prompts',
+        }
+        self.assertEqual(set(self.shared.opts.data_labels), expected)
+        for key in expected:
+            self.assertIs(getattr(self.shared.opts, key), True)
+            self.assertIsNone(self.shared.opts.data_labels[key].section[0])
+        self.shared.opts.save.assert_not_called()
+
+    def test_checkbox_changes_survive_settings_reload_and_keep_unrelated_options(self):
+        self.shared.opts.data['unrelated_option'] = 'keep me'
+        errors = {tab: self.script.ui(is_img2img)[0]
+                  for is_img2img, tab in ((False, 'txt2img'), (True, 'img2img'))}
+        for tab, checkbox in errors.items():
+            self.assertIs(checkbox.do_not_save_to_config, True)
+            binding = checkbox.input.call_args.kwargs
+            self.assertEqual(binding['inputs'], [checkbox])
+            self.assertIs(binding['queue'], False)
+            self.assertIs(binding['fn'](tab == 'img2img'), tab == 'img2img')
+        template = self.module._TEMPLATE_PROMPT_CHECKBOXES['img2img']
+        for call in template.input.call_args_list:
+            call.kwargs['fn'](False)
+        self.assertEqual(self.shared.opts.save.call_count, 2)
+        saved = json.loads(Path(self.shared.config_filename).read_text(encoding='utf-8'))
+        self.assertEqual(saved, {
+            'include_style_txt2img_error_on_missing': False,
+            'include_style_img2img_error_on_missing': True,
+            'include_style_load_template_prompts': False,
+            'unrelated_option': 'keep me',
+        })
+        self.shared.opts = core.HostOptions(saved)
+        self.module._register_ui_settings()
+        self.module._reset_template_prompt_checkboxes()
+        for is_img2img, tab in ((False, 'txt2img'), (True, 'img2img')):
+            (checkbox,) = self.script.ui(is_img2img)
+            self.assertIs(checkbox.value, tab == 'img2img')
+            self.assertIs(self.module._TEMPLATE_PROMPT_CHECKBOXES[tab].value, False)
+        self.assertIs(self.module._load_template_prompts_enabled(), False)
+        self.shared.opts.save.assert_not_called()
+
+    def test_error_checkbox_values_are_saved_separately_in_both_directions(self):
+        for is_img2img, tab in ((False, 'txt2img'), (True, 'img2img')):
+            (checkbox,) = self.script.ui(is_img2img)
+            callback = checkbox.input.call_args.kwargs['fn']
+            for enabled in (False, True):
+                self.assertIs(callback(enabled), enabled)
+                saved = json.loads(Path(self.shared.config_filename).read_text(encoding='utf-8'))
+                self.assertIs(saved[f'include_style_{tab}_error_on_missing'], enabled)
+                other_tab = 'txt2img' if is_img2img else 'img2img'
+                self.assertIs(saved[f'include_style_{other_tab}_error_on_missing'], True)
 
     def allow_missing(self):
         self.error_on_missing = False

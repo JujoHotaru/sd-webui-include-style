@@ -661,7 +661,7 @@ class IncludeStyleScript(scripts.Script):
     def postprocess(self, p, *args):
         _restore_processing(p)
 
-    def postprocess_batch(self, p, images, **kwargs):
+    def postprocess_batch(self, p, *args, **kwargs):
         _update_original_metadata(p)
 
     def before_process(self, p, error_on_missing=True, *args):

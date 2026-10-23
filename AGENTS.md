@@ -48,7 +48,7 @@ UIのラベルは英語を既定とし、`localizations/ja_JP.json`に日本語�
 6. deleteを先に、replaceを後に、作業用辞書の全スタイルと入力プロンプトへ順次適用します。指示のみのスタイルも、指示文字列を除いた空欄として扱います。
 7. 全計算の成功後に共有辞書を作業用辞書へ差し替え、元の辞書を処理状態に保存します。失敗時は共有辞書を変更しません。
 
-`process` は `p.extra_generation_params` の `ADetailer prompt`、`ADetailer negative prompt` と末尾に番号が付いた同形式のキーについて、文字列またはリストのincludeとincludefileを展開します。番号は数値と英語の序数（`2nd`・`3rd`・`4th`など）の両方に対応します。ADetailer と併用するには、ホスト側で `includestyle` を ADetailer の適用対象スクリプト一覧に登録し、ADetailer 側の処理でこのスクリプトの `before_process` が呼ばれる必要があります。`postprocess` と処理オブジェクトの `close` は処理状態を復元します。入れ子処理では子の終了後に親の作業用辞書へ戻ります。
+`process` は `p.extra_generation_params` の `ADetailer prompt`、`ADetailer negative prompt` と末尾に番号が付いた同形式のキーについて、文字列またはリストのincludeとincludefileを展開します。番号は数値と英語の序数（`2nd`・`3rd`・`4th`など）の両方に対応します。ADetailer と併用するには、ホスト側で `includestyle` を ADetailer の適用対象スクリプト一覧に登録し、ADetailer 側の処理でこのスクリプトの `before_process` が呼ばれる必要があります。`postprocess` と処理オブジェクトの `close` は処理状態を復元します。入れ子処理では子の終了後に親の作業用辞書へ戻ります。`postprocess_batch`はホストから画面のスクリプト引数と名前付き`images`の両方を受けるため、`images`を位置引数として宣言せず、`*args`・`**kwargs`で受けます。
 
 ADetailerの適用対象指定は、画面のタイトル`IncludeStyle`ではなく、スクリプトファイル名から拡張子を除いた`includestyle`です。[ADetailerのスクリプト選択処理](https://github.com/Bing-su/adetailer/blob/main/scripts/%21adetailer.py)を互換性確認の参照先にしてください。
 

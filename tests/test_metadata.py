@@ -152,14 +152,13 @@ class IncludeStyleMetadataTests(unittest.TestCase):
         self.assertEqual(params, {**previous, 'Prompt': payload['prompt'],
                                  'Negative prompt': payload['negative prompt'], 'Styles array': []})
 
-    def test_disabled_template_loading_keeps_auto_include_without_metadata(self):
+    def test_disabled_template_loading_skips_auto_include_without_metadata(self):
         self.module._set_load_template_prompts(False)
         params = {'Prompt': '基本, outdoors', 'Negative prompt': '基本ネガ, blurry',
                   'Styles array': ['loaded style']}
+        previous = copy.deepcopy(params)
         self.module._on_infotext_pasted('', params)
-        self.assertEqual(params, {'Prompt': '#include<base>, outdoors',
-                                 'Negative prompt': '#include<base>, blurry',
-                                 'Styles array': ['loaded style']})
+        self.assertEqual(params, previous)
 
     def test_malformed_metadata_is_ignored_and_stale_metadata_is_removed(self):
         valid = {"prompt": "raw", "negative prompt": "raw negative", "styles": ["base"]}

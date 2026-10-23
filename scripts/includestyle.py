@@ -231,10 +231,10 @@ def _auto_include_from_infotext(infotext, params):
 
 
 def _on_infotext_pasted(_infotext, params):
+    if not _load_template_prompts_enabled():
+        return
     if METADATA_KEY not in params:
         _auto_include_from_infotext(_infotext, params)
-        return
-    if not _load_template_prompts_enabled():
         return
     raw = params.get(METADATA_KEY)
     if not isinstance(raw, str):

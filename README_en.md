@@ -40,7 +40,7 @@ Open the “IncludeStyle” accordion in the txt2img or img2img generation scree
 
 This setting applies to positive and negative prompts, nested references in styles and files, and ADetailer references. The `inc` and `file` aliases behave the same way. Invalid file paths, file read or encoding errors, and reference cycles still stop generation when the checkbox is disabled.
 
-“Load template prompts when reading image information” restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded and are saved automatically. Both screens restore the last checkbox state after restarting WebUI. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. Automatic include conversion for images without restoration data is unaffected.
+“Load template prompts when reading image information” restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded and are saved automatically. Both screens restore the last checkbox state after restarting WebUI. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. The extension also skips converting prompt text that matches a style into include directives, whether or not restoration data is present.
 
 ## Syntax
 

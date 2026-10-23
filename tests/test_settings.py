@@ -61,9 +61,9 @@ class SettingsTests(unittest.TestCase):
     def test_persistent_settings_are_hidden_and_default_to_enabled(self):
         self.assertEqual(self.core.ui_settings_callbacks, [self.module._register_ui_settings])
         expected = {
-            'include_style_txt2img_error_on_missing',
-            'include_style_img2img_error_on_missing',
+            'include_style_common_error_on_missing',
             'include_style_load_template_prompts',
+            'include_style_save_template_prompts',
         }
         self.assertEqual(set(self.shared.opts.data_labels), expected)
         for key in expected:
@@ -84,12 +84,12 @@ class SettingsTests(unittest.TestCase):
         template = self.module._TEMPLATE_PROMPT_CHECKBOXES['img2img']
         for call in template.input.call_args_list:
             call.kwargs['fn'](False)
-        self.assertEqual(self.shared.opts.save.call_count, 2)
+        self.assertEqual(self.shared.opts.save.call_count, 3)
         saved = json.loads(Path(self.shared.config_filename).read_text(encoding='utf-8'))
         self.assertEqual(saved, {
-            'include_style_txt2img_error_on_missing': False,
-            'include_style_img2img_error_on_missing': True,
+            'include_style_common_error_on_missing': True,
             'include_style_load_template_prompts': False,
+            'include_style_save_template_prompts': True,
             'unrelated_option': 'keep me',
         })
         self.shared.opts = core.HostOptions(saved)
@@ -97,21 +97,27 @@ class SettingsTests(unittest.TestCase):
         self.module._reset_template_prompt_checkboxes()
         for is_img2img, tab in ((False, 'txt2img'), (True, 'img2img')):
             (checkbox,) = self.script.ui(is_img2img)
-            self.assertIs(checkbox.value, tab == 'img2img')
+            self.assertIs(checkbox.value, True)
             self.assertIs(self.module._TEMPLATE_PROMPT_CHECKBOXES[tab].value, False)
         self.assertIs(self.module._load_template_prompts_enabled(), False)
         self.shared.opts.save.assert_not_called()
 
-    def test_error_checkbox_values_are_saved_separately_in_both_directions(self):
-        for is_img2img, tab in ((False, 'txt2img'), (True, 'img2img')):
-            (checkbox,) = self.script.ui(is_img2img)
-            callback = checkbox.input.call_args.kwargs['fn']
-            for enabled in (False, True):
-                self.assertIs(callback(enabled), enabled)
-                saved = json.loads(Path(self.shared.config_filename).read_text(encoding='utf-8'))
-                self.assertIs(saved[f'include_style_{tab}_error_on_missing'], enabled)
-                other_tab = 'txt2img' if is_img2img else 'img2img'
-                self.assertIs(saved[f'include_style_{other_tab}_error_on_missing'], True)
+    def test_error_checkbox_is_shared_and_synchronized_between_screens(self):
+        self.script.ui(False)
+        self.script.ui(True)
+        controls = self.module._ERROR_ON_MISSING_CHECKBOXES
+        for enabled in (False, True):
+            checkbox = controls['txt2img']
+            checkbox.value = enabled
+            for call in checkbox.input.call_args_list:
+                binding = call.kwargs
+                result = binding['fn'](enabled)
+                for target in binding.get('outputs', []):
+                    target.value = result
+            self.assertIs(self.shared.opts.include_style_common_error_on_missing, enabled)
+            self.assertTrue(all(control.value is enabled for control in controls.values()))
+            saved = json.loads(Path(self.shared.config_filename).read_text(encoding='utf-8'))
+            self.assertIs(saved['include_style_common_error_on_missing'], enabled)
 
     def allow_missing(self):
         self.error_on_missing = False

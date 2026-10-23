@@ -24,7 +24,9 @@ PROMPTS_DIRECTORY = Path(__file__).resolve().parent.parent / 'prompts'
 METADATA_KEY = 'Include-style'
 AUTO_INCLUDE_ON_PASTE = True
 _UI_SETTINGS_LOCK = threading.Lock()
+_ERROR_ON_MISSING_CHECKBOXES = {}
 _TEMPLATE_PROMPT_CHECKBOXES = {}
+_SAVE_TEMPLATE_PROMPT_CHECKBOXES = {}
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -157,6 +159,8 @@ def _update_original_metadata(p):
         return
     originals = state.originals
     params.pop(METADATA_KEY, None)
+    if not _save_template_prompts_enabled():
+        return
     if any(any(flags) for flags in originals.changed):
         def value(**fields):
             return originals.value(_original_index(p, fields))
@@ -258,9 +262,17 @@ def _on_infotext_pasted(_infotext, params):
 
 
 def _register_ui_settings():
-    for key in ('include_style_txt2img_error_on_missing',
-                'include_style_img2img_error_on_missing',
-                'include_style_load_template_prompts'):
+    error_key = 'include_style_common_error_on_missing'
+    if error_key not in shared.opts.data:
+        # 画面別設定が残っていればtxt2img側を優先して共通設定へ引き継ぐ
+        legacy = shared.opts.data
+        default = legacy.get('include_style_txt2img_error_on_missing',
+                             legacy.get('include_style_img2img_error_on_missing', True))
+        if not isinstance(default, bool):
+            default = True
+        shared.opts.add_option(error_key, shared.OptionInfo(default, section=(None, 'IncludeStyle')))
+    for key in ('include_style_load_template_prompts',
+                'include_style_save_template_prompts'):
         shared.opts.add_option(key, shared.OptionInfo(True, section=(None, 'IncludeStyle')))
 
 
@@ -271,6 +283,22 @@ def _save_ui_setting(key, enabled):
         return getattr(shared.opts, key)
 
 
+def _bind_synced_checkbox(checkbox, registry, setter):
+    checkbox.do_not_save_to_config = True
+    checkbox.input(fn=setter, inputs=[checkbox], queue=False)
+    for other in registry.values():
+        for source, target in ((checkbox, other), (other, checkbox)):
+            source.input(fn=setter, inputs=[source], outputs=[target], queue=False)
+
+
+def _common_error_on_missing_enabled():
+    return getattr(shared.opts, 'include_style_common_error_on_missing', True)
+
+
+def _set_common_error_on_missing(enabled):
+    return _save_ui_setting('include_style_common_error_on_missing', enabled)
+
+
 def _load_template_prompts_enabled():
     return getattr(shared.opts, 'include_style_load_template_prompts', True)
 
@@ -279,8 +307,18 @@ def _set_load_template_prompts(enabled):
     return _save_ui_setting('include_style_load_template_prompts', enabled)
 
 
+def _save_template_prompts_enabled():
+    return getattr(shared.opts, 'include_style_save_template_prompts', True)
+
+
+def _set_save_template_prompts(enabled):
+    return _save_ui_setting('include_style_save_template_prompts', enabled)
+
+
 def _reset_template_prompt_checkboxes():
+    _ERROR_ON_MISSING_CHECKBOXES.clear()
     _TEMPLATE_PROMPT_CHECKBOXES.clear()
+    _SAVE_TEMPLATE_PROMPT_CHECKBOXES.clear()
 
 
 class _IncludeResolver:
@@ -559,34 +597,32 @@ class IncludeStyleScript(scripts.Script):
 
     def ui(self, is_img2img):
         tab = 'img2img' if is_img2img else 'txt2img'
-        error_setting = f'include_style_{tab}_error_on_missing'
         with gr.Accordion('IncludeStyle', open=False):
             error_on_missing = gr.Checkbox(
-                value=lambda: getattr(shared.opts, error_setting, True),
+                value=_common_error_on_missing_enabled,
                 label='Stop with an error if the target is not found during generation',
                 elem_id=f'include_style_{tab}_error_on_missing',
             )
-            error_on_missing.do_not_save_to_config = True
-            error_on_missing.input(
-                fn=lambda enabled: _save_ui_setting(error_setting, enabled),
-                inputs=[error_on_missing], queue=False,
+            _bind_synced_checkbox(error_on_missing, _ERROR_ON_MISSING_CHECKBOXES,
+                                  _set_common_error_on_missing)
+            _ERROR_ON_MISSING_CHECKBOXES[tab] = error_on_missing
+            save_template_prompts = gr.Checkbox(
+                value=_save_template_prompts_enabled,
+                label='Save template prompts in generated images',
+                elem_id=f'include_style_{tab}_save_template_prompts',
             )
+            _bind_synced_checkbox(save_template_prompts, _SAVE_TEMPLATE_PROMPT_CHECKBOXES,
+                                  _set_save_template_prompts)
+            _SAVE_TEMPLATE_PROMPT_CHECKBOXES[tab] = save_template_prompts
             load_template_prompts = gr.Checkbox(
                 value=_load_template_prompts_enabled,
                 label='Load template prompts when reading image information',
                 elem_id=f'include_style_{tab}_load_template_prompts',
             )
             # チェック状態はshared.optsで保存し、UIの既定値による上書きを防ぐ
-            load_template_prompts.do_not_save_to_config = True
-            load_template_prompts.input(
-                fn=_set_load_template_prompts, inputs=[load_template_prompts], queue=False,
-            )
-            for other in _TEMPLATE_PROMPT_CHECKBOXES.values():
-                # input イベントだけを使い、相方の更新で再発火させない
-                for source, target in ((load_template_prompts, other), (other, load_template_prompts)):
-                    source.input(
-                        fn=_set_load_template_prompts, inputs=[source], outputs=[target], queue=False,
-                    )
+            # 相方の更新でinputを再発火させず、両画面の設定を同期する
+            _bind_synced_checkbox(load_template_prompts, _TEMPLATE_PROMPT_CHECKBOXES,
+                                  _set_load_template_prompts)
             _TEMPLATE_PROMPT_CHECKBOXES[tab] = load_template_prompts
         return (error_on_missing,)
 

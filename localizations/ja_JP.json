@@ -1,4 +1,5 @@
 {
     "Stop with an error if the target is not found during generation": "生成時、対象が見つからない場合はエラーとする",
-    "Load template prompts when reading image information": "画像情報の読み込み時にテンプレートプロンプトを読み込む"
+    "Load template prompts when reading image information": "画像情報の読み込み時にテンプレートプロンプトを読み込む",
+    "Save template prompts in generated images": "生成画像にテンプレートプロンプトを保存する"
 }

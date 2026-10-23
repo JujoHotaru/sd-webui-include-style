@@ -34,7 +34,9 @@ UIのラベルは英語を既定とし、`localizations/ja_JP.json`に日本語�
 
 `IncludeStyleScript` は `AlwaysVisible` のスクリプトとして登録されます。`ui`でtxt2img・img2imgの生成画面に`gr.Accordion("IncludeStyle", open=False)`を追加し、既定値`True`の`gr.Checkbox`を返します。ホストはその値を`before_process`と`process`の`error_on_missing`引数へ渡します。引数省略時も`True`とし、`_StyleState.error_on_missing`に生成ごとの値を保持して、`process`では同じ状態の値を使います。
 
-`on_ui_settings`で`shared.opts`に非表示の設定を登録します。`include_style_txt2img_error_on_missing`・`include_style_img2img_error_on_missing`は画面別、`include_style_load_template_prompts`は両画面共通で、すべて既定値は`True`です。Settingsページに項目は追加しません。チェックの`input`イベントで`opts.set`後に`opts.save(shared.config_filename)`を呼び、変更時に自動保存します。拡張機能内の保存は専用ロックで直列化します。両チェックを`do_not_save_to_config`でUI既定値保存から除外し、値を返すcallableで再読み込み時も保存済みの状態を表示します。旧実装の`include_style_error_on_missing`がホストの設定ファイルに残っていても参照しません。
+この拡張機能の利用者向けオプションを追加する場合は、WebUIのSettingsページではなく、txt2img・img2imgの`IncludeStyle`パネル内に配置します。ユーザーが画面別の設定を明示的に求めない限り、txt2imgとimg2imgで共通の設定値を使い、チェックボックスも相互に同期します。設定値は必要に応じて`shared.opts`へ登録して永続化し、Settingsページに項目を作らないでください。
+
+`on_ui_settings`で`shared.opts`に設定を登録します。`include_style_common_error_on_missing`・`include_style_load_template_prompts`・`include_style_save_template_prompts`はtxt2img・img2imgで共用し、すべて既定値は`True`です。これらはSettingsページに表示せず、txt2img・img2imgの`IncludeStyle`パネルにチェックボックスとして表示し、両画面で同期します。生成画面のテンプレート読み込みチェックは`do_not_save_to_config`でUI既定値保存から除外し、値を返すcallableで再読み込み時も保存済みの状態を表示します。テンプレート読み込みチェックの`input`イベントは`opts.set`後に`opts.save(shared.config_filename)`を呼び、自動保存します。拡張機能内の保存は専用ロックで直列化します。保存チェックは`do_not_save_to_config`でUI既定値保存から除外し、`opts.set`と`opts.save(shared.config_filename)`で変更時に自動保存します。旧実装の`include_style_error_on_missing`がホストの設定ファイルに残っていても参照しません。
 
 `before_process` は他のスクリプトの `process` より先に実行する目的で使われ、次の処理を行います。
 
@@ -52,7 +54,7 @@ ADetailerの適用対象指定は、画面のタイトル`IncludeStyle`ではな
 
 ## 生プロンプトのメタデータ
 
-`before_process`は入力の原本と欄ごと・リスト要素ごとの発動、選択スタイルを`_OriginalPrompts`に記録します。未選択スタイルの事前展開は発動として扱いません。`postprocess_batch`は生成後・保存前に`Include-style`だけを`extra_generation_params`へ追加します。値はホストの`create_infotext`から呼ばれるcallableで、該当画像の両欄が未発動の場合は`None`を返します。どちらかが発動していれば、両欄の原本文字列を`prompt`と`negative prompt`、選択スタイル名の配列を`styles`に持つJSONオブジェクト表現の文字列を返します。JSONの外側にはホストの生成情報の引用処理も適用されます。選択スタイルは発動判定とコピーの識別にも使います。
+`before_process`は入力の原本と欄ごと・リスト要素ごとの発動、選択スタイルを`_OriginalPrompts`に記録します。未選択スタイルの事前展開は発動として扱いません。`postprocess_batch`は`include_style_save_template_prompts`が有効な場合に限り、生成後・保存前に`Include-style`を`extra_generation_params`へ追加します。無効な場合は既存の同キーも除去して追加しません。値はホストの`create_infotext`から呼ばれるcallableで、該当画像の両欄が未発動の場合は`None`を返します。どちらかが発動していれば、両欄の原本文字列を`prompt`と`negative prompt`、選択スタイル名の配列を`styles`に持つJSONオブジェクト表現の文字列を返します。JSONの外側にはホストの生成情報の引用処理も適用されます。選択スタイルは発動判定とコピーの識別にも使います。
 
 保存形式は次のとおりです。`Include-style`以外の専用キーは追加しません。PNGでは`parameters`、JPEG・WebPではEXIFの生成情報内に含めます。WebUIのメタデータ保存設定が無効な場合は画像ファイルに保存されません。
 

@@ -33,7 +33,7 @@ Restart WebUI after installation. When enabled, the extension processes prompt s
 
 The UI uses English by default. For Japanese, search for “Localization” in WebUI's “Settings”, select `ja_JP`, click “Apply settings”, and then click “Reload UI”. The labels below are for the English UI.
 
-Open the “IncludeStyle” accordion in the txt2img or img2img generation screen to change “Stop with an error if the target is not found during generation”. This checkbox is enabled by default. Each generation uses the checkbox value from its own screen. Changes are saved automatically and restored separately for each screen after restarting WebUI. Generate as usual.
+Open the “IncludeStyle” accordion in the txt2img or img2img generation screen to change “Stop with an error if the target is not found during generation”. This checkbox is enabled by default. txt2img and img2img share the same setting, and changing one checkbox updates the other. Changes are saved automatically and restored after restarting WebUI. Generate as usual.
 
 - Enabled: generation stops with an error if a referenced style or file cannot be found.
 - Disabled: a warning is printed in the console, the missing reference is replaced with an empty string, and generation continues. The remaining text and valid references are processed as usual.
@@ -41,6 +41,8 @@ Open the “IncludeStyle” accordion in the txt2img or img2img generation scree
 This setting applies to positive and negative prompts, nested references in styles and files, and ADetailer references. The `inc` and `file` aliases behave the same way. Invalid file paths, file read or encoding errors, and reference cycles still stop generation when the checkbox is disabled.
 
 “Load template prompts when reading image information” restores the prompts before expansion and the selected styles saved in an image. It is enabled by default, and its checkboxes in txt2img and img2img stay synchronized. Changes apply the next time image information is loaded and are saved automatically. Both screens restore the last checkbox state after restarting WebUI. When disabled, images with this extension's restoration data keep the expanded prompts and style selection loaded by WebUI instead of restoring the original inputs. The extension also skips converting prompt text that matches a style into include directives, whether or not restoration data is present.
+
+The “IncludeStyle” panel in txt2img and img2img has a “Save template prompts in generated images” checkbox. It is enabled by default, and the two checkboxes stay synchronized. Changes are saved automatically and persist after WebUI restarts. When disabled, the extension does not save its own “Include-style” restoration metadata in generated images.
 
 ## Syntax
 
@@ -261,7 +263,7 @@ When a command from this extension is used in either prompt field or in a select
 - The negative prompt before expansion
 - The styles selected during generation
 
-If a command was used in either field, both prompts and the style selection are saved together. If insertion-target commands append file text to the opposite side, the saved inputs for both fields are still their original contents before the append. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
+When “Save template prompts in generated images” is enabled, if a command was used in either field, both prompts and the style selection are saved together. When disabled, the extension does not save its “Include-style” restoration metadata. If insertion-target commands append file text to the opposite side, the saved inputs for both fields are still their original contents before the append. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
 
 This works with PNG, JPEG, and WebP. Enable WebUI's image metadata saving setting.
 

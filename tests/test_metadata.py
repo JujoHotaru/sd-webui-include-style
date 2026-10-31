@@ -296,6 +296,67 @@ class IncludeStyleMetadataTests(unittest.TestCase):
                 self.assertEqual(params['Styles array'], selected)
                 self.assertEqual(params['Seed'], '123')
 
+    def test_restore_clears_saved_negative_style_already_included_in_template(self):
+        name = '標準Negative'
+        self.shared.prompt_styles.styles[name] = core.PromptStyle(
+            name, '', 'worst quality, low quality, score_1, score_2, score_3,artist name, '
+            'blurry, jpeg artifacts, chromatic aberration',
+        )
+        negative = ('bad anatomy, multiple arms, white background, simple background, flat background, '
+                    '#include<標準Negative>, hair pin, hair ornament')
+        payload = {'prompt': 'portrait', 'negative prompt': negative, 'styles': [name]}
+        params = {'Prompt': 'expanded', 'Negative prompt': 'expanded negative',
+                  'Styles array': [name], 'Seed': '4006835652',
+                  self.module.METADATA_KEY: json.dumps(payload)}
+        self.module._on_infotext_pasted('', params)
+        self.assertEqual(params['Prompt'], payload['prompt'])
+        self.assertEqual(params['Negative prompt'], negative)
+        self.assertEqual(params['Styles array'], [])
+        self.assertEqual(params['Seed'], '4006835652')
+        processing = self.prompt(params['Prompt'], params['Negative prompt'], params['Styles array'])
+        self.script.before_process(processing)
+        self.assertEqual(processing.negative_prompt.count('worst quality'), 1)
+
+    def test_restore_deduplicates_only_styles_fully_covered_by_direct_includes(self):
+        self.shared.prompt_styles.styles.update({
+            'positive': core.PromptStyle('positive', 'good', ''),
+            'negative': core.PromptStyle('negative', '', 'bad'),
+            'both': core.PromptStyle('both', 'good', 'bad'),
+            'rule': core.PromptStyle('rule', '#delete<x>', ''),
+            'wrapper': core.PromptStyle('wrapper', 'before {prompt} after', ''),
+            'empty': core.PromptStyle('empty', ' ', ''),
+        })
+        cases = (
+            ('#include<positive>', '', ['positive'], []),
+            ('', '$inc < negative >', ['negative'], []),
+            ('%include < both >', '#inc<both>', ['both', 'positive', 'both'], ['positive']),
+            ('#include<both>', '', ['both'], ['both']),
+            ('', '#include<both>', ['both'], ['both']),
+            ('#include<negative>', '', ['negative'], ['negative']),
+            ('#include<rule> #include<wrapper> #include<empty> #include<missing>', '',
+             ['rule', 'wrapper', 'empty', 'missing'], ['rule', 'wrapper', 'empty', 'missing']),
+            ('#delete<#include<positive>>', '', ['positive'], ['positive']),
+            ('#includefile<positive>', '', ['positive'], ['positive']),
+        )
+        for positive, negative, selected, expected in cases:
+            with self.subTest(positive=positive, negative=negative, selected=selected):
+                payload = {'prompt': positive, 'negative prompt': negative, 'styles': selected}
+                params = {self.module.METADATA_KEY: json.dumps(payload)}
+                self.module._on_infotext_pasted('', params)
+                self.assertEqual(params['Prompt'], positive)
+                self.assertEqual(params['Negative prompt'], negative)
+                self.assertEqual(params['Styles array'], expected)
+
+    def test_restore_deduplication_uses_source_styles_during_generation(self):
+        self.shared.prompt_styles.styles['rule'] = core.PromptStyle('rule', '#include<base>', '')
+        processing = self.prompt('plain')
+        self.script.before_process(processing)
+        self.assertEqual(self.shared.prompt_styles.styles['rule'].prompt, '基本')
+        payload = {'prompt': '#include<rule>', 'negative prompt': '', 'styles': ['rule']}
+        params = {self.module.METADATA_KEY: json.dumps(payload)}
+        self.module._on_infotext_pasted('', params)
+        self.assertEqual(params['Styles array'], ['rule'])
+
     def test_only_requested_metadata_keys_are_added(self):
         p = self.prompt('#include<base>', '#include<base>', extra={'Other extension': 'keep'})
         self.script.before_process(p)

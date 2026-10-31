@@ -275,6 +275,8 @@ Enable “Load template prompts when reading image information”, then restore 
 
 You can also restore by sending an image from PNG Info to txt2img or img2img. If no style was selected during generation, the style selection is cleared when the data is loaded. Dropping an image alone does not apply its data to the fields; click the read button. If the restoration data is damaged, the original input may not be recoverable.
 
+If a saved selected style is already included directly in the restored template, it is removed from the style selector to prevent duplicate application. This applies when the same style is included in every field where it has nonempty contents. Selections are preserved if a required field is not covered, the style contains commands or `{prompt}`, or the style is no longer registered. Includes through files or nested styles are excluded from this duplicate check. For example, if “Standard Negative” has an empty positive field and the negative prompt contains `#include<Standard Negative>`, only its selection is cleared; the include remains in the negative prompt.
+
 The contents of referenced styles and files are not saved. If their contents change, the result of the next expansion changes as well.
 
 ## Automatically converting prompts to include commands
@@ -285,7 +287,7 @@ For example, if the positive prompt in the “Hairstyle” style is `black hair,
 
 Text inside existing `include`, `includefile`, `delete`, and `replace` commands is not converted. Styles with empty contents, or with one of this extension's commands or `{prompt}` in either the positive or negative field, are excluded. Styles are also excluded if their name is empty, has leading or trailing whitespace, or contains `>` or a newline.
 
-An ending style and includes in the middle of the prompt can be used together. Conversion preserves the loaded style selection and Hires prompt fields. If the entire prompt or ending does not get restored as a style because of the combination of positive/negative prompts or WebUI settings, it remains as text. Hires prompt fields are not converted.
+An ending style and includes in the middle of the prompt can be used together. Style selections restored from the image are preserved. When automatic conversion occurs without a restored style selection, the previous styles left in the selector are cleared to prevent duplicate application. If no automatic conversion occurs, the selector is left unchanged. If the entire prompt or ending does not get restored as a style because of the combination of positive/negative prompts or WebUI settings, it remains as text. Hires prompt fields are not converted and retain their loaded contents.
 
 This feature works automatically and currently has no setting to turn it on or off. For images with this extension's restoration data, the template-prompt loading option above restores the saved original input when enabled and keeps WebUI's loaded contents when disabled. Automatic include conversion is skipped in either case. Automatic conversion matches current style contents, so the matched style may differ from the one actually selected in the past.
 

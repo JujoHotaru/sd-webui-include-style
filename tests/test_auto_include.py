@@ -188,6 +188,47 @@ class AutoIncludeTests(unittest.TestCase):
         self.assertEqual(parsed["Hires negative prompt"], "parsed negative")
         self.assertEqual(parsed['Seed'], '2')
 
+    def test_conversion_clears_previous_ui_selection_when_host_did_not_extract_styles(self):
+        self.shared.prompt_styles.styles['hair'] = core.PromptStyle('hair', 'black hair', 'bad hands')
+        cases = (
+            ('black hair, tail', 'plain', '#include<hair>, tail', 'plain'),
+            ('plain', 'bad hands, tail', 'plain', '#include<hair>, tail'),
+            ('black hair, tail', 'bad hands, tail', '#include<hair>, tail', '#include<hair>, tail'),
+        )
+        for positive, negative, expected_positive, expected_negative in cases:
+            with self.subTest(positive=positive, negative=negative):
+                parsed = {'Prompt': positive, 'Negative prompt': negative, 'Seed': '123'}
+                self._paste(params=parsed)
+                self.assertEqual(parsed['Prompt'], expected_positive)
+                self.assertEqual(parsed['Negative prompt'], expected_negative)
+                # ホストはこのキーがないと選択欄の以前のスタイルを保持する
+                selected = parsed.get('Styles array', ['hair'])
+                self.assertEqual(selected, [])
+                processing = self.prompt(parsed['Prompt'], parsed['Negative prompt'], selected)
+                self.script.before_process(processing)
+                self.assertEqual(processing.prompt, positive)
+                self.assertEqual(processing.negative_prompt, negative)
+                self.script.postprocess(processing)
+                self.assertEqual(parsed['Seed'], '123')
+
+    def test_no_conversion_keeps_previous_ui_selection_untouched(self):
+        self.shared.prompt_styles.styles['hair'] = core.PromptStyle('hair', 'black hair', '')
+        for positive in ('plain', 'black hair', 'prefix, black hair'):
+            with self.subTest(positive=positive):
+                parsed = {'Prompt': positive, 'Negative prompt': ''}
+                previous = dict(parsed)
+                self._paste(params=parsed)
+                self.assertEqual(parsed, previous)
+
+    def test_conversion_clears_non_list_selection_and_preserves_explicit_empty_list(self):
+        self.shared.prompt_styles.styles['hair'] = core.PromptStyle('hair', 'black hair', '')
+        for selected in (None, 'hair', ('hair',), []):
+            with self.subTest(selected=selected):
+                parsed = {'Prompt': 'black hair, tail', 'Negative prompt': '', 'Styles array': selected}
+                self._paste(params=parsed)
+                self.assertEqual(parsed['Prompt'], '#include<hair>, tail')
+                self.assertEqual(parsed['Styles array'], [])
+
     def test_unspecified_hires_values_are_left_untouched(self):
         self.shared.prompt_styles.styles['style'] = core.PromptStyle('style', 'alpha', '')
         parsed = {"Prompt": "alpha, tail", "Negative prompt": "n", "Hires prompt": "keep",

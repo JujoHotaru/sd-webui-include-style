@@ -232,6 +232,40 @@ def _auto_include_from_infotext(infotext, params):
         return
     # ホストが抽出した本文・スタイル選択・hires設定は保持し、残った部分だけを変換する
     params.update(converted)
+    # 選択の復元指定がなければ、UIに残った以前のスタイルとの二重適用を防ぐ
+    if not isinstance(params.get('Styles array'), list):
+        params['Styles array'] = []
+
+
+def _restored_style_selection(prompt, negative_prompt, selected):
+    included = []
+    protected = '|'.join((RE_PAT_EXPAND, RE_PAT_DELETE, RE_PAT_REPLACE))
+    for text in (prompt, negative_prompt):
+        names = set()
+        for command in re.finditer(protected, text):
+            match = re.fullmatch(RE_PAT_INCLUDE, command[0])
+            if match:
+                names.add(match[2].strip())
+        included.append(names)
+
+    with _STYLE_LOCK:
+        database = shared.prompt_styles
+        source = database.styles
+        if _STYLE_STATES and _STYLE_STATES[-1].database is database:
+            source = _STYLE_STATES[-1].source
+        restored = []
+        for name in selected:
+            style = source.get(name)
+            if style is not None:
+                bodies = (style.prompt or '', style.negative_prompt or '')
+                # 両欄の本文が直接include済みで、副作用のないスタイルだけ選択を解除する
+                if (any(body.strip() for body in bodies)
+                        and not any(_has_commands(body) or '{prompt}' in body for body in bodies)
+                        and all(not body.strip() or name in included[side]
+                                for side, body in enumerate(bodies))):
+                    continue
+            restored.append(name)
+        return restored
 
 
 def _on_infotext_pasted(_infotext, params):
@@ -258,7 +292,7 @@ def _on_infotext_pasted(_infotext, params):
     # 原本の両欄と選択スタイルを一緒に戻し、展開済みスタイルの二重適用を防ぐ
     params['Prompt'] = prompt
     params['Negative prompt'] = negative_prompt
-    params['Styles array'] = list(selected)
+    params['Styles array'] = _restored_style_selection(prompt, negative_prompt, selected)
 
 
 def _register_ui_settings():

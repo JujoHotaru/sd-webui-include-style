@@ -44,6 +44,33 @@ This setting applies to positive and negative prompts, nested references in styl
 
 The “IncludeStyle” panel in txt2img and img2img has a “Save template prompts in generated images” checkbox. It is enabled by default, and the two checkboxes stay synchronized. Changes are saved automatically and persist after WebUI restarts. When disabled, the extension does not save its own “Include-style” restoration metadata in generated images.
 
+Enable “Enable C++-style comments (// and /* */)” to remove comments before generation. It is disabled by default. txt2img and img2img share this setting, and the checkboxes stay synchronized. Changes are saved automatically and persist after WebUI restarts. See “Comments” for the syntax.
+
+## Comments
+
+When enabled, comments are removed from positive and negative prompts, style contents, referenced files, ADetailer's additional prompts, and the dedicated Hires positive and negative prompt fields. ADetailer also requires the script selection setting described below.
+
+- If the first non-whitespace characters on a line are `//`, the whole line, including its terminating newline, is removed. Whitespace includes spaces and tabs. An inline `//`, as in `cat // memo`, is preserved.
+- Everything from `/*` to the first `*/`, including both delimiters, is removed, even across multiple lines. If there is no closing `*/`, the rest of that input is removed. Block comments do not nest.
+
+```text
+// Do not use this line for generation
+1girl, /* Clothing notes
+continued on this line */ school uniform
+```
+
+Result:
+
+```text
+1girl,  school uniform
+```
+
+Comments are removed before include/file expansion and delete/replace processing, so commands and file insertion-target directives inside comments do not execute. Each field, list element, style field, and file is parsed independently; comments cannot start in one source and end in another. Comments in referenced text are removed when that source is parsed. Delimiters newly formed by expansion or replacement are not parsed again. Dedicated Hires fields receive comment removal only; include, delete, and replace commands in those fields are not processed individually.
+
+A `/*` inside a `//` comment and a `//` inside a block comment are ignored. LF, CRLF, and CR line endings are supported. Whitespace and newlines outside removed regions are preserved. No spaces or commas are inserted, so `cat/*memo*/girl` becomes `catgirl`. Quotation marks and backslashes do not escape comment delimiters. If a dedicated Hires field becomes an empty string after comment removal, WebUI's standard behavior uses the main prompt for that field.
+
+When “Save template prompts in generated images” is enabled, comments in the original positive and negative inputs are preserved. For images where comments were removed from dedicated Hires fields, both original Hires inputs are also saved and restored when template loading is enabled. Style/file contents and the original ADetailer-specific inputs are not copied into this restoration data.
+
 ## Syntax
 
 The four syntax forms below are available. In each form, you can replace the leading `#` with `$` or `%`. Write command names in lowercase.
@@ -257,13 +284,13 @@ For example, enter `$include<Long Black Hair>` in “ADetailer prompt” and `$i
 
 ## Saving and restoring raw prompts
 
-When a command from this extension is used in either prompt field or in a selected style and generation succeeds, the image stores the following restoration data:
+When a command from this extension is used in either prompt field or in a selected style, or enabled comment removal changes their contents, and generation succeeds, the image stores the following restoration data:
 
 - The positive prompt before include and other commands were expanded
 - The negative prompt before expansion
 - The styles selected during generation
 
-When “Save template prompts in generated images” is enabled, if a command was used in either field, both prompts and the style selection are saved together. When disabled, the extension does not save its “Include-style” restoration metadata. If insertion-target commands append file text to the opposite side, the saved inputs for both fields are still their original contents before the append. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
+When “Save template prompts in generated images” is enabled, if a command was used or comments were removed in either field, both prompts and the style selection are saved together. Comment removal in dedicated Hires fields also activates saving, with both original Hires fields for that image additionally saved and restored. When disabled, the extension does not save its “Include-style” restoration metadata. If insertion-target commands append file text to the opposite side, the saved inputs for both fields are still their original contents before the append. When generating multiple images, each image stores the corresponding input. Newlines, quotation marks, and leading or trailing whitespace are preserved. The image's regular generation parameters also retain the expanded prompts used for generation.
 
 This works with PNG, JPEG, and WebP. Enable WebUI's image metadata saving setting.
 

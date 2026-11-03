@@ -17,6 +17,7 @@ RE_PAT_DELETE = r'([#$%]delete\s*<([^>]*)>)'
 RE_PAT_REPLACE = r'([#$%]replace\s*<([^>|]*)\s*\|\s*([^>]*)>)'
 RE_PAT_ADETAILER = r'^ADetailer (negative )?prompt(?: \d+(?:st|nd|rd|th)?)?$'
 RE_PAT_FILE_POSITION = r'(?<![^\r\n])##(?P<position>positive|negative)##(?:\r\n|\r|\n|$)'
+RE_COMMENTS = re.compile(r'(?<![^\r\n])[^\S\r\n]*//[^\r\n]*(?:\r\n|\r|\n|$)|/\*[\s\S]*?(?:\*/|$)')
 
 MAX_INCLUDE_DEPTH = 100
 MAX_PROMPT_LENGTH = 1_000_000
@@ -27,6 +28,9 @@ _UI_SETTINGS_LOCK = threading.Lock()
 _ERROR_ON_MISSING_CHECKBOXES = {}
 _TEMPLATE_PROMPT_CHECKBOXES = {}
 _SAVE_TEMPLATE_PROMPT_CHECKBOXES = {}
+_CPP_COMMENT_CHECKBOXES = {}
+_HIRES_FIELDS = (('hr_prompt', 'hires prompt', 'Hires prompt'),
+                 ('hr_negative_prompt', 'hires negative prompt', 'Hires negative prompt'))
 
 # 共有スタイルを使う期間を直列化し、同じスレッドの入れ子処理を許可する
 _STYLE_LOCK = threading.RLock()
@@ -42,6 +46,11 @@ def _map_prompts(value, transform):
 
 def _prompt_strings(value):
     return value if isinstance(value, list) else [value or '']
+
+
+def _strip_comments(text):
+    # 元の行頭だけで // を判定し、コメント内部の別の開始記号は読み飛ばす
+    return RE_COMMENTS.sub('', text)
 
 
 def _has_commands(text):
@@ -88,7 +97,7 @@ def _combine_prompt_pair(values, expanded):
 
 
 class _OriginalPrompts:
-    def __init__(self, p, source, working, prompt, negative_prompt, previous):
+    def __init__(self, p, source, working, prompt, negative_prompt, previous, hires):
         self.styles = list(p.styles or [])
         self.values = []
         self.changed = []
@@ -115,13 +124,36 @@ class _OriginalPrompts:
                 flags.append(selected_changed or _has_commands(text) or text != transformed)
             self.values.append(raw)
             self.changed.append(flags)
+        self.hires = {}
+        self.hires_outputs = hires
+        self.hires_changed = {}
+        for attribute, _, _ in _HIRES_FIELDS:
+            if attribute not in hires:
+                continue
+            raw = _map_prompts(getattr(p, attribute), lambda text: text)
+            output = hires[attribute]
+            if (inherited is not None and attribute in inherited.hires_outputs
+                    and raw == inherited.hires_outputs[attribute] and self.styles == inherited.styles):
+                self.hires[attribute] = inherited.hires[attribute]
+                self.hires_changed[attribute] = inherited.hires_changed[attribute]
+            else:
+                self.hires[attribute] = raw
+                self.hires_changed[attribute] = [a != b for a, b in
+                                                 zip(_prompt_strings(raw), _prompt_strings(output))]
+
+    def hires_is_changed(self, index):
+        for key, flags in self.hires_changed.items():
+            position = index if isinstance(self.hires_outputs[key], list) else 0
+            if 0 <= position < len(flags) and flags[position]:
+                return True
+        return False
 
     def is_changed(self, side, index):
         position = index if isinstance(self.outputs[side], list) else 0
         return 0 <= position < len(self.changed[side]) and self.changed[side][position]
 
     def value(self, index):
-        if not any(self.is_changed(side, index) for side in (0, 1)):
+        if not any(self.is_changed(side, index) for side in (0, 1)) and not self.hires_is_changed(index):
             return None
         texts = []
         for raw in self.values:
@@ -132,9 +164,18 @@ class _OriginalPrompts:
             else:
                 texts.append(raw)
         # 標準の infotext の引用処理を通しても、空文字と前後空白を失わない
-        return json.dumps({
+        payload = {
             'prompt': texts[0], 'negative prompt': texts[1], 'styles': self.styles,
-        }, ensure_ascii=False)
+        }
+        if self.hires_is_changed(index):
+            for attribute, key, _ in _HIRES_FIELDS:
+                raw = self.hires.get(attribute, '')
+                if isinstance(raw, list):
+                    if not 0 <= index < len(raw):
+                        return None
+                    raw = raw[index]
+                payload[key] = raw
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def _original_index(p, fields):
@@ -161,7 +202,7 @@ def _update_original_metadata(p):
     params.pop(METADATA_KEY, None)
     if not _save_template_prompts_enabled():
         return
-    if any(any(flags) for flags in originals.changed):
+    if any(any(flags) for flags in originals.changed) or any(any(flags) for flags in originals.hires_changed.values()):
         def value(**fields):
             return originals.value(_original_index(p, fields))
         params[METADATA_KEY] = value
@@ -239,8 +280,11 @@ def _auto_include_from_infotext(infotext, params):
 
 def _restored_style_selection(prompt, negative_prompt, selected):
     included = []
+    cpp_comments = _cpp_comments_enabled()
     protected = '|'.join((RE_PAT_EXPAND, RE_PAT_DELETE, RE_PAT_REPLACE))
     for text in (prompt, negative_prompt):
+        if cpp_comments:
+            text = _strip_comments(text)
         names = set()
         for command in re.finditer(protected, text):
             match = re.fullmatch(RE_PAT_INCLUDE, command[0])
@@ -289,10 +333,17 @@ def _on_infotext_pasted(_infotext, params):
     if not (isinstance(prompt, str) and isinstance(negative_prompt, str)
             and isinstance(selected, list) and all(isinstance(style, str) for style in selected)):
         return
+    hires = {}
+    if any(key in payload for _, key, _ in _HIRES_FIELDS):
+        for _, key, ui_key in _HIRES_FIELDS:
+            if not isinstance(payload.get(key), str):
+                return
+            hires[ui_key] = payload[key]
     # 原本の両欄と選択スタイルを一緒に戻し、展開済みスタイルの二重適用を防ぐ
     params['Prompt'] = prompt
     params['Negative prompt'] = negative_prompt
     params['Styles array'] = _restored_style_selection(prompt, negative_prompt, selected)
+    params.update(hires)
 
 
 def _register_ui_settings():
@@ -308,6 +359,7 @@ def _register_ui_settings():
     for key in ('include_style_load_template_prompts',
                 'include_style_save_template_prompts'):
         shared.opts.add_option(key, shared.OptionInfo(True, section=(None, 'IncludeStyle')))
+    shared.opts.add_option('include_style_cpp_comments', shared.OptionInfo(False, section=(None, 'IncludeStyle')))
 
 
 def _save_ui_setting(key, enabled):
@@ -349,17 +401,27 @@ def _set_save_template_prompts(enabled):
     return _save_ui_setting('include_style_save_template_prompts', enabled)
 
 
+def _cpp_comments_enabled():
+    return getattr(shared.opts, 'include_style_cpp_comments', False)
+
+
+def _set_cpp_comments(enabled):
+    return _save_ui_setting('include_style_cpp_comments', enabled)
+
+
 def _reset_template_prompt_checkboxes():
     _ERROR_ON_MISSING_CHECKBOXES.clear()
     _TEMPLATE_PROMPT_CHECKBOXES.clear()
     _SAVE_TEMPLATE_PROMPT_CHECKBOXES.clear()
+    _CPP_COMMENT_CHECKBOXES.clear()
 
 
 class _IncludeResolver:
-    def __init__(self, source, processing=None, error_on_missing=True):
+    def __init__(self, source, processing=None, error_on_missing=True, cpp_comments=False):
         self.source = source
         self.processing = processing
         self.error_on_missing = error_on_missing
+        self.cpp_comments = cpp_comments
         self.cache = {}
         self.active = set()
         self.warned = set()
@@ -497,6 +559,8 @@ class _IncludeResolver:
         return tuple(texts)
 
     def _expand_result(self, prompt, negative, depth=0, file_mode=False):
+        if self.cpp_comments:
+            prompt = _strip_comments(prompt)
         parts = [[], []]
         lengths = [0, 0]
         offset = 0
@@ -535,7 +599,7 @@ class _IncludeResolver:
 
 class _StyleState:
     def __init__(self, database, source, working, original_close, owner, file_texts, copied_from, originals,
-                 style_results, error_on_missing):
+                 style_results, error_on_missing, cpp_comments):
         self.database = database
         self.original = database.styles
         self.source = source
@@ -545,6 +609,7 @@ class _StyleState:
         self.file_texts = file_texts
         self.style_results = style_results
         self.error_on_missing = error_on_missing
+        self.cpp_comments = cpp_comments
         self.copied_from = copied_from
         self.originals = originals
         self.metadata_valid = True
@@ -658,10 +723,17 @@ class IncludeStyleScript(scripts.Script):
             _bind_synced_checkbox(load_template_prompts, _TEMPLATE_PROMPT_CHECKBOXES,
                                   _set_load_template_prompts)
             _TEMPLATE_PROMPT_CHECKBOXES[tab] = load_template_prompts
+            cpp_comments = gr.Checkbox(
+                value=_cpp_comments_enabled,
+                label='Enable C++-style comments (// and /* */)',
+                elem_id=f'include_style_{tab}_cpp_comments',
+            )
+            _bind_synced_checkbox(cpp_comments, _CPP_COMMENT_CHECKBOXES, _set_cpp_comments)
+            _CPP_COMMENT_CHECKBOXES[tab] = cpp_comments
         return (error_on_missing,)
 
     def _replace_common(self, prompt, negative):
-        resolver = _IncludeResolver(shared.prompt_styles.styles)
+        resolver = _IncludeResolver(shared.prompt_styles.styles, cpp_comments=_cpp_comments_enabled())
         return _map_prompts(prompt, lambda text: resolver.expand(text, negative))
 
     def process(self, p, error_on_missing=True, *args):
@@ -669,7 +741,8 @@ class IncludeStyleScript(scripts.Script):
         source = state.working if state is not None and state.active else shared.prompt_styles.styles
         if state is not None and state.active:
             error_on_missing = state.error_on_missing
-        resolver = _IncludeResolver(source, p, error_on_missing)
+        cpp_comments = state.cpp_comments if state is not None and state.active else _cpp_comments_enabled()
+        resolver = _IncludeResolver(source, p, error_on_missing, cpp_comments)
         if state is not None and state.active:
             resolver.file_texts = state.file_texts
             resolver.cache.update(state.style_results)
@@ -720,7 +793,10 @@ class IncludeStyleScript(scripts.Script):
             if _STYLE_STATES and _STYLE_STATES[-1].database is database:
                 # ADetailer の子処理に親の削除・置換済みスタイルを引き継がせない
                 source = _STYLE_STATES[-1].source
-            resolver = _IncludeResolver(source, p, error_on_missing)
+            cpp_comments = _cpp_comments_enabled()
+            resolver = _IncludeResolver(source, p, error_on_missing, cpp_comments)
+            hires = {attribute: _map_prompts(getattr(p, attribute), _strip_comments)
+                     for attribute, _, _ in _HIRES_FIELDS if cpp_comments and hasattr(p, attribute)}
             resolver.defer_errors = True
             working = {}
             for key, style in source.items():
@@ -736,6 +812,8 @@ class IncludeStyleScript(scripts.Script):
             used_styles = []
             for value in (p.prompt, p.negative_prompt):
                 for text in _prompt_strings(value):
+                    if cpp_comments:
+                        text = _strip_comments(text or '')
                     used_styles.extend(found[1].strip() for found in re.findall(RE_PAT_INCLUDE, text or ''))
             used_styles.extend(p.styles or [])
             used_styles = list(dict.fromkeys(used_styles))
@@ -776,7 +854,7 @@ class IncludeStyleScript(scripts.Script):
                 if getattr(original_close, '__self__', None) is not None:
                     original_close = MethodType(original_close.__func__, p)
             copied_from = previous if previous is not None and previous.owner is not p else None
-            originals = _OriginalPrompts(p, source, working, prompt, negative_prompt, previous)
+            originals = _OriginalPrompts(p, source, working, prompt, negative_prompt, previous, hires)
             style_results = {}
             resolver.defer_errors = True
             for key in source:
@@ -794,13 +872,15 @@ class IncludeStyleScript(scripts.Script):
                     style_results[('style', key, negative)] = _Expansion(texts, result.end_negative)
             resolver.defer_errors = False
             state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from,
-                                originals, style_results, error_on_missing)
+                                originals, style_results, error_on_missing, cpp_comments)
             setattr(p, _STATE_ATTRIBUTE, state)
             if original_close is not None:
                 p.close = MethodType(_close_processing, p)
             _STYLE_STATES.append(state)
             database.styles = working
             p.prompt, p.negative_prompt = prompt, negative_prompt
+            for attribute, value in hires.items():
+                setattr(p, attribute, value)
             installed = True
         finally:
             # 展開に失敗した場合は共有データを変更せず、ロックを解放する

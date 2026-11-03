@@ -65,7 +65,9 @@ class SettingsTests(unittest.TestCase):
             'include_style_load_template_prompts',
             'include_style_save_template_prompts',
         }
-        self.assertEqual(set(self.shared.opts.data_labels), expected)
+        self.assertEqual(set(self.shared.opts.data_labels), expected | {'include_style_cpp_comments'})
+        self.assertIs(self.shared.opts.include_style_cpp_comments, False)
+        self.assertIsNone(self.shared.opts.data_labels['include_style_cpp_comments'].section[0])
         for key in expected:
             self.assertIs(getattr(self.shared.opts, key), True)
             self.assertIsNone(self.shared.opts.data_labels[key].section[0])
@@ -90,6 +92,7 @@ class SettingsTests(unittest.TestCase):
             'include_style_common_error_on_missing': True,
             'include_style_load_template_prompts': False,
             'include_style_save_template_prompts': True,
+            'include_style_cpp_comments': False,
             'unrelated_option': 'keep me',
         })
         self.shared.opts = core.HostOptions(saved)

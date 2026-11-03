@@ -200,8 +200,8 @@ class SettingsTests(unittest.TestCase):
         p = self.prompt('#file<parent>', 'original')
         with contextlib.redirect_stdout(io.StringIO()):
             self.script.before_process(p, self.error_on_missing)
-        self.assertEqual(p.prompt, 'good')
-        self.assertEqual(p.negative_prompt, 'original, bad  end tail')
+        self.assertEqual(p.prompt, 'good   tail')
+        self.assertEqual(p.negative_prompt, 'original, bad  end')
 
     def test_adetailer_warns_and_continues_with_and_without_before_process(self):
         self.allow_missing()

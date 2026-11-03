@@ -68,9 +68,8 @@ def _append_prompt(text, addition):
 
 
 class _Expansion:
-    def __init__(self, texts, end_negative):
+    def __init__(self, texts):
         self.texts = tuple(texts)
-        self.end_negative = end_negative
 
 
 class _DeferredIncludeError(RuntimeError):
@@ -457,7 +456,7 @@ class _IncludeResolver:
         return self._style_result(key, negative, depth).texts[negative]
 
     def _style_result(self, key, negative, depth=0):
-        empty = _Expansion(('', ''), negative)
+        empty = _Expansion(('', ''))
         cache_key = ('style', key, negative)
         if cache_key in self.active:
             self._error(key, '循環参照が発生しました')
@@ -487,7 +486,7 @@ class _IncludeResolver:
         return self._file_result(key, negative, depth).texts[negative]
 
     def _file_result(self, key, negative, depth=0):
-        empty = _Expansion(('', ''), negative)
+        empty = _Expansion(('', ''))
         try:
             relative = PureWindowsPath(key)
             if not relative.parts or relative.is_absolute() or relative.drive or relative.root:
@@ -583,18 +582,16 @@ class _IncludeResolver:
                 offset = found.end()
                 continue
             key = found[3].strip()
+            # 挿入先の切り替えは各ファイル内に限定し、子から戻った後も親の挿入先を維持する
             if found[2] in ('includefile', 'file'):
                 content = self._file_result(key, current, depth)
-                next_side = content.end_negative if file_mode else current
             else:
                 content = self._style_result(key, current, depth)
-                next_side = current
             for side in (0, 1):
                 emit(content.texts[side].strip(), side)
-            current = next_side
             offset = found.end()
         emit(prompt[offset:], current)
-        return _Expansion((''.join(part) for part in parts), current)
+        return _Expansion(''.join(part) for part in parts)
 
 
 class _StyleState:
@@ -869,7 +866,7 @@ class IncludeStyleScript(scripts.Script):
                             text = _extract_rules(text, [], [])
                         texts.append(_apply_rules(text, negative_deletes if side else deletes,
                                                   negative_replacements if side else replacements))
-                    style_results[('style', key, negative)] = _Expansion(texts, result.end_negative)
+                    style_results[('style', key, negative)] = _Expansion(texts)
             resolver.defer_errors = False
             state = _StyleState(database, source, working, original_close, p, resolver.file_texts, copied_from,
                                 originals, style_results, error_on_missing, cpp_comments)

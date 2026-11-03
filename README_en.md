@@ -220,9 +220,9 @@ blue eyes
 
 If the file is referenced from the negative field, the initial `black hair, long hair,` also goes to the negative side. The `blue eyes` after `##positive##` is appended to the positive prompt. Command meanings are fixed regardless of the calling field. Text after the directive in a regular prompt or style stays in its original field.
 
-### Inheriting the target from a nested file
+### Insertion targets in nested files
 
-A child file's final insertion target also applies to the remaining text in its parent file. If the child has no commands, the target stays unchanged. The next command in the parent can select a new target.
+A child file starts with the insertion target active at its call site in the parent. The child's `##positive##` and `##negative##` commands apply only within that child file. After the child is expanded, the remaining parent text uses the parent's insertion target. To change the parent's target, write a command in the parent file. The same rule applies at every nesting level.
 
 For example, create `prompts/parent.txt` and `prompts/child.txt` as follows.
 
@@ -231,22 +231,21 @@ For example, create `prompts/parent.txt` and `prompts/child.txt` as follows.
 ```text
 black hair,
 #file<child>
-blurry
-##positive##
 blue eyes
 ```
 
 `child.txt`:
 
 ```text
+long hair,
 ##negative##
-bad anatomy,
+bad anatomy
 ```
 
 | Field | Input | Expanded result |
 | --- | --- | --- |
-| Positive | `#file<parent>` | `black hair,` + newline + `blue eyes` |
-| Negative | `low quality` | `low quality, bad anatomy,` + newline + `blurry` |
+| Positive | `#file<parent>` | `black hair,` + newline + `long hair,` + newline + `blue eyes` |
+| Negative | `low quality` | `low quality, bad anatomy` |
 
 Files used in styles route text to both sides in the same way. For styles applied through WebUI's style selector, routed text is combined into the corresponding fields of that style before it is applied. In ADetailer, text is appended to the opposite field for the same additional processing pass. With prompts for multiple images, the corresponding positive and negative inputs are processed as a pair for each image.
 

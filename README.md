@@ -222,9 +222,9 @@ blue eyes
 
 Negative欄から呼び出した場合は、最初の`black hair, long hair,`もNegative側に入ります。`##positive##`以降の`blue eyes`は通常側の末尾へ追加します。命令名の意味は呼び出した欄にかかわらず固定です。通常のプロンプトやスタイルに書いたディレクティブの後ろの文字は、その元の欄に残ります。
 
-### 入れ子のファイルで挿入先を引き継ぐ
+### 入れ子のファイルでの挿入先
 
-子ファイルの最後の挿入先は、親ファイルの後続本文にも引き継ぎます。子に命令がなければ挿入先は変わりません。親で次の命令を記述すると、そこで挿入先を再指定できます。
+子ファイルは、親がそのファイルを呼び出した時点の挿入先から処理を始めます。子の`##positive##`・`##negative##`は子ファイル内だけに適用し、読み込み後は親の挿入先で後続本文を処理します。親の挿入先を変える場合は、親ファイルに命令を記述してください。さらに深く入れ子にした場合も同じです。
 
 例えば`prompts/parent.txt`と`prompts/child.txt`を次のようにします。
 
@@ -233,22 +233,21 @@ Negative欄から呼び出した場合は、最初の`black hair, long hair,`も
 ```text
 black hair,
 #file<child>
-blurry
-##positive##
 blue eyes
 ```
 
 `child.txt`:
 
 ```text
+long hair,
 ##negative##
-bad anatomy,
+bad anatomy
 ```
 
 | 欄 | 入力 | 展開結果 |
 | --- | --- | --- |
-| 通常 | `#file<parent>` | `black hair,` + 改行 + `blue eyes` |
-| Negative | `low quality` | `low quality, bad anatomy,` + 改行 + `blurry` |
+| 通常 | `#file<parent>` | `black hair,` + 改行 + `long hair,` + 改行 + `blue eyes` |
+| Negative | `low quality` | `low quality, bad anatomy` |
 
 スタイル内でファイルを使う場合も、通常・Negativeの両側へ振り分けます。WebUIの選択欄から適用するスタイルでは、振り分けた本文をそのスタイルの対応する欄へまとめてから適用します。ADetailerでは、同じ追加処理の通常・Negative欄を組にして追記します。複数画像のプロンプトを使う場合は、画像ごとに対応する両欄を組にして処理します。
 

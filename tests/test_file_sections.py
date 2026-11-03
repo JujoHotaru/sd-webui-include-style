@@ -89,30 +89,78 @@ class FileSectionTests(unittest.TestCase):
                 self.assertEqual(p.negative_prompt, '基本ネガ')
                 self.script.postprocess(p)
 
-    def test_nested_file_last_destination_flows_into_parent_but_not_main_prompt(self):
+    def test_nested_file_destination_stays_local_to_child(self):
         self.write_prompt('child.txt', '##negative##\nchild')
         self.write_prompt('parent.txt', 'parent #file<child> tail')
         p = self.prompt('before [#file<parent>] after', 'existing')
         self.script.before_process(p)
-        self.assertEqual(p.prompt, 'before [parent] after')
-        self.assertEqual(p.negative_prompt, 'existing, child tail')
+        self.assertEqual(p.prompt, 'before [parent  tail] after')
+        self.assertEqual(p.negative_prompt, 'existing, child')
 
-    def test_nested_final_marker_changes_parent_even_when_child_has_no_text(self):
+    def test_nested_empty_section_does_not_change_parent_destination(self):
         self.write_prompt('child.txt', '##negative##')
         self.write_prompt('parent.txt', 'parent #file<child>tail')
         p = self.prompt('#file<parent>')
         self.script.before_process(p)
-        self.assertEqual(p.prompt, 'parent')
-        self.assertEqual(p.negative_prompt, 'tail')
+        self.assertEqual(p.prompt, 'parent tail')
+        self.assertEqual(p.negative_prompt, '')
 
-    def test_parent_marker_overrides_child_destination_and_style_uses_current_field(self):
+    def test_parent_markers_and_styles_use_parent_destination_after_child_returns(self):
         self.write_prompt('child.txt', '##negative##\nchild')
         self.write_prompt('parent.txt', '#file<child> #include<base>\n'
+                          '##negative##\n #include<base>\n'
                           '##positive##\n#include<base>')
         p = self.prompt('#file<parent>')
         self.script.before_process(p)
-        self.assertEqual(p.prompt, '基本')
+        self.assertEqual(p.prompt, '基本\n基本')
         self.assertEqual(p.negative_prompt, 'child 基本ネガ')
+
+    def test_readme_nested_example_keeps_parent_suffix_positive(self):
+        self.write_prompt('parent.txt', 'black hair,\n#file<child>\nblue eyes')
+        self.write_prompt('child.txt', 'long hair,\n##negative##\nbad anatomy')
+        p = self.prompt('#file<parent>', 'low quality')
+        self.script.before_process(p)
+        self.assertEqual(p.prompt, 'black hair,\nlong hair,\nblue eyes')
+        self.assertEqual(p.negative_prompt, 'low quality, bad anatomy')
+
+    def test_nested_destination_is_local_for_aliases_sides_newlines_and_cached_calls(self):
+        for command in ('file', 'includefile'):
+            for marker in ('#', '$', '%'):
+                for newline in ('\n', '\r\n', '\r'):
+                    for negative in (False, True):
+                        with self.subTest(command=command, marker=marker,
+                                          newline=repr(newline), negative=negative):
+                            side = 'negative' if negative else 'positive'
+                            opposite = 'positive' if negative else 'negative'
+                            self.write_prompt('child.txt', newline.join(
+                                ('head', f'##{opposite}##', 'other')))
+                            call = f'{marker}{command}<child>'
+                            self.write_prompt('parent.txt', f'##{side}##' + newline
+                                              + f'[{call}] tail #include<base> / [{call}] end')
+                            p = self.prompt('keep' if negative else '#file<parent>',
+                                            '#file<parent>' if negative else 'keep')
+                            self.script.before_process(p)
+                            own = '[head] tail ' + ('基本ネガ' if negative else '基本') + ' / [head] end'
+                            self.assertEqual((p.prompt, p.negative_prompt),
+                                             ('keep, otherother', own) if negative
+                                             else (own, 'keep, otherother'))
+                            self.script.postprocess(p)
+
+    def test_nested_file_in_selected_style_and_adetailer_preserves_parent_rules(self):
+        self.write_prompt('child.txt', '##negative##\nchild #replace<bad|good>')
+        self.write_prompt('parent.txt', '#file<child> tail #delete<remove>')
+        self.shared.prompt_styles.styles['selected'] = files.core.PromptStyle(
+            'selected', '#file<parent>', 'bad remove')
+        extra = {'ADetailer prompt 2nd': '#file<parent>',
+                 'ADetailer negative prompt 2nd': 'old'}
+        p = self.prompt('remove main', 'bad remove', selected=['selected'], extra=extra)
+        self.script.before_process(p)
+        self.assertEqual((p.prompt, p.negative_prompt), (' main', 'good remove'))
+        style = self.shared.prompt_styles.styles['selected']
+        self.assertEqual((style.prompt, style.negative_prompt), ('tail ', 'good remove, child '))
+        self.script.process(p)
+        self.assertEqual(extra['ADetailer prompt 2nd'], 'tail #delete<remove>')
+        self.assertEqual(extra['ADetailer negative prompt 2nd'], 'old, child #replace<bad|good>')
 
     def test_circular_nested_reference_reports_error_and_stops_generation(self):
         self.write_prompt('loop.txt', '##negative##\nN #file<loop> #file<missing> tail')
@@ -268,14 +316,14 @@ class FileSectionTests(unittest.TestCase):
         self.assertEqual(p.prompt, 'P')
         self.assertEqual(p.negative_prompt, 'N child 基本ネガ tail')
 
-    def test_grandchild_final_destination_propagates_through_both_parents(self):
+    def test_grandchild_destination_stays_local_at_every_nesting_level(self):
         self.write_prompt('grandchild.txt', '##positive##\nG')
         self.write_prompt('child.txt', 'C #file<grandchild> child tail')
         self.write_prompt('parent.txt', '##negative##\nN #file<child> parent tail')
         p = self.prompt('#file<parent> main tail', 'old')
         self.script.before_process(p)
-        self.assertEqual(p.prompt, 'G child tail parent tail main tail')
-        self.assertEqual(p.negative_prompt, 'old, N C')
+        self.assertEqual(p.prompt, 'G main tail')
+        self.assertEqual(p.negative_prompt, 'old, N C  child tail parent tail')
 
     def test_alias_cycle_after_destination_switch_stops_before_depth_limit(self):
         target = self.write_prompt('target.txt', '##negative##\nN #file<alias> tail')
